@@ -1,0 +1,12 @@
+{
+  "emeraldwalk.runonsave": {
+    "commands": [
+      {
+        "cmd": "find . \\( -name '*.cabal' -or -name 'cabal*.project*' \\) -exec cabal-gild --io {} \\;",
+        "isAsync": true,
+        "match": "(\\.*\\.cabal|cabal\\.*\\.project.*|\\.l?hs)$"
+      }
+    ]
+  },
+  "[cabal]": { "editor.formatOnSave": false }
+}
