@@ -104,10 +104,10 @@ viewModel Model {..} =
                     [span_ [class_ "icon"] [i_ [class_ "fas fa-stop"] []]]
                 ]
             , section_
-                [class_ "main buttons"]
+                [class_ "main buttons columns"]
                 [ a_
                   [ onClick (Toggle sn)
-                  , class_ $ T.unwords $ "button" : maybeToList (statusClass s)
+                  , class_ $ T.unwords $ "column" : "button" : maybeToList (statusClass s)
                   ]
                   [text $ coerce sn]
                 | (sn, s) <- OMap.assocs playlist
