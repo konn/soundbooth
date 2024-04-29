@@ -181,22 +181,25 @@ handleWs ::
   ) =>
   WS.Connection ->
   Eff es ()
-handleWs conn = sendResp `race_` sendEvt `race_` recvr
+handleWs conn = do
+  reqQ <- asks @PlayerQueues (.reqQ)
+  atomically $ writeTBQueue reqQ GetPlaylist
+  sendResp `race_` sendEvt `race_` recvr
   where
     sendEvt = do
       evtQ <- asks @PlayerQueues (.evtQ)
       S.repeatM (atomically (readTBQueue evtQ))
-        & S.chain (logInfo "Sending event to conn: " . T.pack . show)
+        & S.chain (logInfo "Sending event to conn: ")
         & S.mapM_ (WS.sendTextData conn)
     sendResp = do
       respQ <- asks @PlayerQueues (.respQ)
       S.repeatM (atomically (readTBQueue respQ))
-        & S.chain (logInfo "Sending resp to conn: " . T.pack . show)
+        & S.chain (logInfo "Sending resp to conn: ")
         & S.mapM_ (WS.sendTextData conn)
     recvr = do
       reqQ <- asks @PlayerQueues (.reqQ)
       S.repeatM (WS.receiveData conn)
-        & S.chain (logInfo "Request: " . T.pack . show)
+        & S.chain (logInfo "Request: ")
         & S.mapM_ (atomically . writeTBQueue reqQ)
 
 serveStatics :: FilePath -> Tagged (Eff es) Application
