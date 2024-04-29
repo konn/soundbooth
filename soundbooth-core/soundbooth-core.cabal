@@ -56,6 +56,7 @@ library
     deepseq,
     hashable,
     text,
+    vector,
 
   -- cabal-gild: discover src
   exposed-modules: Soundbooth.Common.Types

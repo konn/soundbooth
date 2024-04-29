@@ -26,19 +26,16 @@ BUILD:
   # From frontend/build.sh in tweag/ghc-wasm-miso-examples
   LET HS_WASM_PATH=$(${CABAL} list-bin -v0 ${target})
   LET WASM_LIB=$(wasm32-wasi-ghc --print-libdir)
-  LET DEST=dist/${wasm}
+  LET DEST=dist
   RUN mkdir -p dist
   RUN --mount ${MOUNT_DIST_NEWSTYLE} ${WASM_LIB}/post-link.mjs --input ${HS_WASM_PATH} --output ghc_wasm_jsffi.js
   RUN --mount ${MOUNT_DIST_NEWSTYLE} wizer --allow-wasi --wasm-bulk-memory true --init-func _initialize -o dist/${wasm} "${HS_WASM_PATH}"
   RUN wasm-opt -Oz dist/${wasm} -o dist/${wasm}
   RUN wasm-tools strip -o dist/${wasm} dist/${wasm}
-  RUN cp wasm-scripts/run.ts dist/run.ts
+  RUN cp data/index.js data/index.html dist/
   RUN cp *.js dist/
 
-  # Use deno to run the console-log demo
-  RUN cd dist && deno run --allow-read ./run.ts ./${wasm}
-
-  SAVE ARTIFACT ./dist/ AS LOCAL _build/${outdir}/
+  SAVE ARTIFACT ./dist AS LOCAL _build
 
 frontend:
   DO +BUILD --target=soundbooth-frontend:exe:soundbooth-frontend

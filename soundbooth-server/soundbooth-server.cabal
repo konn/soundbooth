@@ -76,6 +76,8 @@ library
     unliftio,
     unordered-containers,
     vector,
+    wai,
+    warp,
     websockets,
     yaml,
 

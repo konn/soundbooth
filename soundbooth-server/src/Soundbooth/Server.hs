@@ -6,7 +6,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-orphans #-} 
 
 module Soundbooth.Server (
   Cues (..),
@@ -217,7 +217,7 @@ processReq (Play sn) = withSample sn \sample -> do
     =<< atomically (TMap.focus Focus.lookupAndDelete sn playing)
   s <- play sample 1.0 1.0 0.0 1.0
   atomically $ TMap.insert s sn playing
-  pure ([Ok], [Playing $ sn NE.:| []])
+  pure ([Ok], [Started $ sn NE.:| []])
 processReq (Stop sn) = do
   playing <- asks @ServerState (.playing)
   stopped <-
