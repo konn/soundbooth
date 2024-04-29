@@ -17,7 +17,6 @@ module Soundbooth.Server.App.Server (
 
 import Control.Applicative ((<**>))
 import Data.Function ((&))
-import Data.Text qualified as T
 import Data.Yaml qualified as Y
 import Effectful (Eff, runEff)
 import Effectful qualified as Eff
