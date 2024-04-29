@@ -2,11 +2,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
-module Audio.Cue.Server (
+module Soundbooth.Server (
   Cues (..),
   Cue (..),
   SoundName (..),
@@ -21,27 +23,27 @@ module Audio.Cue.Server (
 
 import Control.Applicative ((<**>))
 import Control.Concurrent.STM (TBQueue, newTBQueueIO)
-import Control.DeepSeq (NFData)
-import Control.Exception.Safe
 import Control.Foldl qualified as L
-import Control.Monad (forM_, unless, when)
-import Data.Aeson (FromJSON, ToJSON)
+import Control.Lens (ifolded, withIndex)
+import Control.Monad (forM_, when)
 import Data.Aeson qualified as J
+import Data.Aeson.Micro qualified as MicroJ
+import Data.Aeson.Micro.Generics ()
 import Data.Bifoldable (bimapM_)
 import Data.ByteString.Char8 qualified as BS8
 import Data.Function ((&))
 import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HM
-import Data.Hashable (Hashable)
-import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
+import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
-import Data.String (IsString)
 import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Vector qualified as V
 import Data.Yaml qualified as Y
 import DeferredFolds.UnfoldlM qualified as U
 import Effectful
+import Effectful.Audio
 import Effectful.Concurrent (threadDelay)
 import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM (atomically, readTBQueue, writeTBQueue)
@@ -53,52 +55,29 @@ import Effectful.FileSystem.IO (stderr)
 import Effectful.FileSystem.IO.ByteString (hPutStrLn)
 import Effectful.Reader.Static (Reader, ask, asks, runReader)
 import Focus qualified
-import GHC.Generics (Generic)
+import GHC.Generics (Generic, Generically (..))
 import Options.Applicative qualified as Opts
-import Sound.ProteaAudio
+import Soundbooth.Common.Types
 import StmContainers.Map qualified as TMap
 import Streaming.Prelude qualified as S
 
+deriving newtype instance J.FromJSON SoundName
+
+deriving newtype instance J.ToJSON SoundName
+
 newtype Cues = Cues {cues :: V.Vector Cue}
   deriving (Show, Eq, Ord, Generic)
-  deriving anyclass (FromJSON, ToJSON)
+  deriving anyclass (J.FromJSON, J.ToJSON)
 
-newtype SoundName = SoundName Text
+data Cue = Cue {name :: !SoundName, path :: !Text}
   deriving (Show, Eq, Ord, Generic)
-  deriving newtype (FromJSON, ToJSON, IsString, Hashable, NFData)
-
-data Cue = Cue {name :: !SoundName, path :: !FilePath}
-  deriving (Show, Eq, Ord, Generic)
-  deriving anyclass (FromJSON, ToJSON)
-
-data Request
-  = Play !SoundName
-  | Stop !SoundName
-  | StopAll
-  deriving (Show, Eq, Ord, Generic)
-  deriving anyclass (FromJSON, ToJSON)
-
-data Response = Ok | UnknownSound !SoundName | Error !Text
-  deriving (Show, Eq, Ord, Generic)
-  deriving anyclass (FromJSON, ToJSON)
-
-data Event
-  = Playing !(NonEmpty SoundName)
-  | Stopped !(NonEmpty SoundName)
-  deriving (Show, Eq, Ord, Generic)
-  deriving anyclass (FromJSON, ToJSON)
+  deriving (MicroJ.FromJSON, MicroJ.ToJSON) via Generically Cue
+  deriving anyclass (J.FromJSON, J.ToJSON)
 
 data Options = Options
   { cueFile :: !FilePath
   , audioOpts :: !AudioOptions
   , stopDetectIntervalInSec :: !Double
-  }
-  deriving (Show, Eq, Ord, Generic)
-
-data AudioOptions = AudioOptions
-  { numTracks :: !Int
-  , sampleFreq :: !Int
-  , bucketSize :: !Int
   }
   deriving (Show, Eq, Ord, Generic)
 
@@ -163,31 +142,48 @@ optionsP = Opts.info (parser <**> Opts.helper) (Opts.fullDesc <> Opts.progDesc "
       pure Options {audioOpts = AudioOptions {..}, ..}
 
 defaultMainWith :: Options -> IO ()
-defaultMainWith opts@Options {..} = withAudio audioOpts do
+defaultMainWith opts@Options {..} = do
   evtQ <- newTBQueueIO 16
   respQ <- newTBQueueIO 16
   reqQ <- newTBQueueIO 16
   cs <- Y.decodeFileThrow @_ @Cues cueFile
-  samples <- HM.fromList <$> mapM (\Cue {..} -> (name,) <$> sampleFromFile path 1.0) (V.toList cs.cues)
   playing <- TMap.newIO
-  runEff $ runConsole $ runConcurrent $ runReader opts $ runReader ServerEnv {..} do
-    runFileSystem (send reqQ)
-      `race_` S.print (S.repeatM (atomically (readTBQueue respQ)))
-      `race_` S.print (S.repeatM (atomically (readTBQueue evtQ)))
-      `race_` runReader ServerState {..} (mainLoop `race_` checkIfStopped)
+  runEff $ runAudio audioOpts $ do
+    samples <- HM.fromList <$> mapM (\Cue {..} -> (name,) <$> sampleFromFile (T.unpack path) 1.0) (V.toList cs.cues)
+    runConsole $ runConcurrent $ runReader opts $ runReader ServerEnv {..} do
+      runFileSystem (send reqQ)
+        `race_` S.print (S.repeatM (atomically (readTBQueue respQ)))
+        `race_` S.print (S.repeatM (atomically (readTBQueue evtQ)))
+        `race_` runReader ServerState {..} (mainLoop `race_` checkIfStopped)
 
 checkIfStopped ::
-  (Reader ServerState :> es, Concurrent :> es, Reader Options :> es) =>
+  (Reader ServerState :> es, Concurrent :> es, Reader Options :> es, Audio :> es) =>
   Eff es ()
-checkIfStopped = go Set.empty
+checkIfStopped = go mempty
   where
     go playing = do
       threadDelay . floor . (1_000_000 *)
         =<< asks @Options (.stopDetectIntervalInSec)
       sst <- asks @ServerState (.playing)
-      nowPlaying <- atomically do
-        U.foldM (L.generalize $ L.premap fst L.set) $ TMap.unfoldlM sst
-      let !stopped = playing Set.\\ nowPlaying
+      (nowPlaying, inactives) <-
+        L.foldOverM
+          (ifolded . withIndex)
+          ( L.premapM
+              (traverse $ liftA2 (,) <$> pure <*> isActive)
+              ( L.generalize $
+                  (,)
+                    <$> L.prefilter
+                      (snd . snd)
+                      (L.premap (fmap fst) L.map)
+                    <*> L.prefilter
+                      (not . snd . snd)
+                      (L.premap fst L.set)
+              )
+          )
+          =<< atomically do
+            U.foldM (L.generalize L.map) $ TMap.unfoldlM sst
+      atomically $ forM_ inactives $ (`TMap.delete` sst)
+      let !stopped = inactives `Set.union` (Map.keysSet playing Set.\\ Map.keysSet nowPlaying)
       forM_ (NE.nonEmpty $ Set.toList stopped) $ \stops -> do
         evts <- asks @ServerState (.evtQ)
         atomically $ writeTBQueue evts $ Stopped stops
@@ -196,9 +192,9 @@ checkIfStopped = go Set.empty
 mainLoop ::
   ( Concurrent :> es
   , Reader ServerState :> es
-  , IOE :> es
   , Reader ServerEnv :> es
   , Console :> es
+  , Audio :> es
   ) =>
   Eff es ()
 mainLoop = do
@@ -215,7 +211,7 @@ mainLoop = do
 processReq ::
   ( Reader ServerState :> es
   , Concurrent :> es
-  , IOE :> es
+  , Audio :> es
   , Reader ServerEnv :> es
   , Console :> es
   ) =>
@@ -223,22 +219,21 @@ processReq ::
   Eff es ([Response], [Event])
 processReq (Play sn) = withSample sn \sample -> do
   playing <- asks @ServerState (.playing)
-  mapM_ (liftIO . soundStop)
+  mapM_ soundStop
     =<< atomically (TMap.focus Focus.lookupAndDelete sn playing)
-  s <- liftIO $ soundPlay sample 1.0 1.0 0.0 1.0
+  s <- play sample 1.0 1.0 0.0 1.0
   atomically $ TMap.insert s sn playing
   pure ([Ok], [Playing $ sn NE.:| []])
 processReq (Stop sn) = do
   playing <- asks @ServerState (.playing)
   stopped <-
-    fmap or . mapM (liftIO . soundStop)
-      =<< atomically (TMap.lookup sn playing)
+    fmap or . mapM stop =<< atomically (TMap.lookup sn playing)
   Console.putStrLn $ "stopped?: " <> BS8.pack (show stopped)
   when stopped $
     atomically $
       TMap.delete sn playing
   pure ([Ok], [Stopped $ NE.singleton sn | stopped])
-processReq StopAll = mempty <$ liftIO soundStopAll
+processReq StopAll = mempty <$ stopAll
 
 withSample ::
   (Reader ServerEnv :> es) =>
@@ -253,16 +248,8 @@ withSample sn k = do
 send :: (FileSystem :> es, Console :> es, Concurrent :> es) => TBQueue Request -> Eff es ()
 send reqs =
   S.repeatM Console.getLine
-    & S.map J.eitherDecodeStrict
-    & S.mapM_ (either (hPutStrLn stderr . BS8.pack . ("Invalid input: " <>)) (atomically . writeTBQueue reqs))
-
-withAudio :: AudioOptions -> IO () -> IO ()
-withAudio aopts = bracket_ (initAudio' aopts) finishAudio
-
-initAudio' :: AudioOptions -> IO ()
-initAudio' aopts =
-  (`unless` throwString "Audio initialisation failed!")
-    =<< initAudio aopts.numTracks aopts.sampleFreq aopts.bucketSize
+    & S.map MicroJ.decodeStrict
+    & S.mapM_ (maybe (hPutStrLn stderr "Invalid input") (atomically . writeTBQueue reqs))
 
 defaultMain :: IO ()
 defaultMain = defaultMainWith =<< Opts.execParser optionsP

@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Audio.Cue.Server (defaultMain)
+import Soundbooth.Server (defaultMain)
 
 main :: IO ()
 main = defaultMain

@@ -2,9 +2,9 @@
   "emeraldwalk.runonsave": {
     "commands": [
       {
-        "cmd": "find . \\( -name '*.cabal' -or -name 'cabal*.project*' \\) -exec cabal-gild --io {} \\;",
+        "cmd": "find . \\( -name '*.cabal' -or -name 'cabal*.project*' \\) -exec bash -c 'cabal-gild --io {}' \\;",
         "isAsync": true,
-        "match": "(\\.*\\.cabal|cabal\\.*\\.project.*|\\.l?hs)$"
+        "match": "(\\.*\\.cabal|cabal.*\\.project.*|\\.l?hs)$"
       }
     ]
   },

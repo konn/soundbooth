@@ -1,15 +1,18 @@
 cabal-version: 3.0
-name: soundbooth
+name: soundbooth-core
 version: 0.1.0.0
-description: Please see the README on GitHub at <https://github.com/konn/soundbooth#readme>
+description: Please see the README on GitHub at <https://github.com/konn/soundbooth/soundbooth-core#readme>
 homepage: https://github.com/konn/soundbooth#readme
 bug-reports: https://github.com/konn/soundbooth/issues
 author: Hiromi ISHII
 maintainer: konn.jinro_at_gmail.com
-copyright: 2024 (c) Hiromi ISHII
+copyright: (c) Hiromi ISHII 2024- present
 license: BSD-3-Clause
 license-file: LICENSE
 build-type: Simple
+tested-with:
+  ghc ==9.8.2 || ==9.10.0.20240412
+
 extra-doc-files:
   CHANGELOG.md
   README.md
@@ -17,18 +20,11 @@ extra-doc-files:
 source-repository head
   type: git
   location: https://github.com/konn/soundbooth
+  subdir: soundbooth-core
 
 common defaults
-  build-depends: base >=4.7 && <5
-  default-language: GHC2021
-  default-extensions:
-    BlockArguments
-    LambdaCase
-    OverloadedLabels
-    OverloadedRecordDot
-
-  autogen-modules: Paths_soundbooth
-  other-modules: Paths_soundbooth
+  autogen-modules: Paths_soundbooth_core
+  other-modules: Paths_soundbooth_core
   ghc-options:
     -Wall
     -Wcompat
@@ -41,40 +37,32 @@ common defaults
     -Wredundant-constraints
     -Wunused-packages
 
+  default-language: GHC2021
+  default-extensions:
+    BlockArguments
+    LambdaCase
+    OverloadedLabels
+    OverloadedRecordDot
+
+  build-depends: base >=4.7 && <5
+
 library
   import: defaults
-  hs-source-dirs: src
-  -- cabal-gild: discover src
-  exposed-modules:
-    Audio.Cue.Server
-
   build-depends:
-    aeson,
     bytestring,
+    cereal,
     containers,
     deepseq,
-    deferred-folds,
-    effectful,
-    focus,
-    foldl,
-    generic-lens,
     hashable,
-    lens,
-    optparse-applicative,
-    proteaaudio,
-    safe-exceptions,
-    stm,
-    stm-containers,
-    streaming,
-    streaming-bytestring,
+    microaeson,
+    microaeson-generics,
     text,
-    unliftio,
-    unordered-containers,
-    vector,
-    websockets,
-    yaml,
 
-executable soundbooth
+  -- cabal-gild: discover src
+  exposed-modules: Soundbooth.Common.Types
+  hs-source-dirs: src
+
+executable soundbooth-core-exe
   import: defaults
   main-is: Main.hs
   hs-source-dirs: app
@@ -83,16 +71,17 @@ executable soundbooth
     -rtsopts
     -with-rtsopts=-N
 
-  build-depends: soundbooth
+  build-depends: soundbooth-core
 
-test-suite soundbooth-test
+test-suite soundbooth-core-test
   import: defaults
   type: exitcode-stdio-1.0
-  main-is: Spec.hs
+  main-is: Test.hs
   hs-source-dirs: test
   ghc-options:
     -threaded
+    -O2
     -rtsopts
     -with-rtsopts=-N
 
-  build-depends: soundbooth
+  build-depends: soundbooth-core

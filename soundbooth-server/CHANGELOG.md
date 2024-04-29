@@ -1,4 +1,4 @@
-# Changelog for `soundbooth`
+# Changelog for `soundbooth-server`
 
 All notable changes to this project will be documented in this file.
 

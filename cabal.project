@@ -1,1 +1,4 @@
-packages: **.cabal
+import: cabal-common.project
+packages:
+  soundbooth-core/soundbooth-core.cabal
+  soundbooth-server/soundbooth-server.cabal
