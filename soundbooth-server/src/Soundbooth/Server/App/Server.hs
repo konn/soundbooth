@@ -202,4 +202,4 @@ serveStatics :: FilePath -> Tagged (Eff es) Application
 serveStatics src =
   Tagged $
     staticApp $
-      defaultWebAppSettings src
+      defaultFileServerSettings src
