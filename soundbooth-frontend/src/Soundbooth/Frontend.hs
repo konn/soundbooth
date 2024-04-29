@@ -12,16 +12,18 @@ import Data.Aeson.Types (FromJSON (..))
 import Data.Coerce (coerce)
 import Data.Foldable (foldMap')
 import Data.Generics.Labels ()
+import Data.List.NonEmpty qualified as NE
 import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
 import Data.Map.Ordered.Strict qualified as OMap
 import Data.Maybe (maybeToList)
-import Data.Monoid (Endo (..))
 import Data.Text qualified as T
 import Data.Vector qualified as V
 import GHC.Generics
 import Miso
+import Miso.String hiding (filter)
 import Soundbooth.Common.Types
+import Prelude hiding (unwords)
 
 defaultMain :: JSM ()
 defaultMain = do
@@ -29,7 +31,13 @@ defaultMain = do
   startApp App {subs = toSubs uri, view = viewModel, ..}
   where
     initialAction = NoOp
-    model = Model {playlist = OMap.empty}
+    model =
+      Model
+        { playlist = OMap.empty
+        , fadeIn = False
+        , fadeOut = False
+        , crossFade = False
+        }
     update = updateModel
 
     events = defaultEvents
@@ -67,12 +75,23 @@ updateModel (Toggle sound) m =
   m <# do NoOp <$ send (toggleCmd m sound)
 updateModel NoOp m = noEff m
 updateModel (Request req) m = m <# do NoOp <$ send req
+updateModel ToggleFadeIn m = noEff $ m & #fadeIn %~ not
+updateModel ToggleFadeOut m = noEff $ m & #fadeOut %~ not
+updateModel ToggleCrossFade m = noEff $ m & #crossFade %~ not
 
 toggleCmd :: Model -> SoundName -> Request
 toggleCmd Model {..} sn =
   case OMap.lookup sn playlist of
-    Just Playing -> Stop sn
-    _ -> Play sn
+    Just Playing
+      | fadeOut -> FadeOut Fading {steps = 10, duration = 3.0} sn
+      | otherwise -> Stop sn
+    _
+      | crossFade
+      , Just froms <-
+          NE.nonEmpty $ filter ((== Playing) . snd) $ OMap.assocs playlist ->
+          CrossFade Fading {steps = 10, duration = 3.0} (fst <$> froms) (sn NE.:| [])
+      | fadeIn -> FadeIn Fading {steps = 10, duration = 3.0} sn
+      | otherwise -> Play sn
 
 handleResponse :: Response -> Model -> Effect Action Model
 handleResponse = const noEff
@@ -84,6 +103,17 @@ handleEvent (Stopped sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Idle)) sns)
 handleEvent (CurrentPlaylist pl) =
   noEff . (#playlist .~ OMap.fromList (V.toList pl.sounds))
+
+mdiDark :: MisoString -> View a
+mdiDark name =
+  span_
+    [class_ "icon"]
+    [ span_
+        [ class_ "iconify mdi mdi-dark"
+        , data_ "icon" $ "mdi-" <> name
+        ]
+        []
+    ]
 
 viewModel :: Model -> View Action
 viewModel Model {..} =
@@ -97,11 +127,38 @@ viewModel Model {..} =
             [ section_
                 [class_ "buttons"]
                 [ a_
-                    [onClick $ Request GetPlaylist, class_ "button is-link is-outlined"]
-                    [span_ [class_ "icon"] [i_ [class_ "fas fa-rotate"] []]]
+                    [onClick $ Request GetPlaylist, class_ "button is-success is-outlined"]
+                    [mdiDark "sync"]
                 , a_
                     [onClick $ Request StopAll, class_ "button is-danger is-outlined"]
-                    [span_ [class_ "icon"] [i_ [class_ "fas fa-stop"] []]]
+                    [mdiDark "stop"]
+                , a_
+                    [ onClick ToggleFadeIn
+                    , class_ $
+                        unwords $
+                          "button"
+                            : "is-link"
+                            : if fadeIn then ["is-active"] else ["is-outlined"]
+                    ]
+                    [mdiDark "arrow-top-right"]
+                , a_
+                    [ onClick ToggleFadeOut
+                    , class_ $
+                        unwords $
+                          "button"
+                            : "is-link"
+                            : ["is-outlined" | not fadeOut]
+                    ]
+                    [mdiDark "arrow-bottom-right"]
+                , a_
+                    [ onClick ToggleCrossFade
+                    , class_ $
+                        unwords $
+                          "button"
+                            : "is-link"
+                            : ["is-outlined" | not crossFade]
+                    ]
+                    [mdiDark "shuffle"]
                 ]
             , section_
                 [class_ "main buttons columns"]
@@ -120,7 +177,12 @@ statusClass :: Status -> Maybe T.Text
 statusClass Idle = Nothing
 statusClass Playing = Just "is-primary"
 
-data Model = Model {playlist :: OMap SoundName Status}
+data Model = Model
+  { playlist :: OMap SoundName Status
+  , fadeIn :: !Bool
+  , fadeOut :: !Bool
+  , crossFade :: !Bool
+  }
   deriving (Show, Eq, Ord, Generic)
 
 data EventOrResponse = Event !Event | Response !Response
@@ -133,5 +195,8 @@ data Action
   = Websock (WebSocket EventOrResponse)
   | Toggle SoundName
   | Request Request
+  | ToggleFadeIn
+  | ToggleFadeOut
+  | ToggleCrossFade
   | NoOp
   deriving (Show, Eq, Generic)
