@@ -66,7 +66,7 @@ updateModel (Websock _) m = noEff m
 updateModel (Toggle sound) m =
   m <# do NoOp <$ send (toggleCmd m sound)
 updateModel NoOp m = noEff m
-updateModel SyncPlaylist m = m <# do NoOp <$ send GetPlaylist
+updateModel (Request req) m = m <# do NoOp <$ send req
 
 toggleCmd :: Model -> SoundName -> Request
 toggleCmd Model {..} sn =
@@ -95,8 +95,17 @@ viewModel Model {..} =
         , section_
             [class_ "soundbooth"]
             [ section_
-                [class_ "main"]
-                [ button_
+                [class_ "buttons"]
+                [ a_
+                    [onClick $ Request GetPlaylist, class_ "button is-link is-outlined"]
+                    [span_ [class_ "icon"] [i_ [class_ "fas fa-rotate"] []]]
+                , a_
+                    [onClick $ Request StopAll, class_ "button is-danger is-outlined"]
+                    [span_ [class_ "icon"] [i_ [class_ "fas fa-stop"] []]]
+                ]
+            , section_
+                [class_ "main buttons"]
+                [ a_
                   [ onClick (Toggle sn)
                   , class_ $ T.unwords $ "button" : maybeToList (statusClass s)
                   ]
@@ -123,6 +132,6 @@ instance FromJSON EventOrResponse where
 data Action
   = Websock (WebSocket EventOrResponse)
   | Toggle SoundName
-  | SyncPlaylist
+  | Request Request
   | NoOp
   deriving (Show, Eq, Generic)
