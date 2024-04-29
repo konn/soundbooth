@@ -202,4 +202,6 @@ serveStatics :: FilePath -> Tagged (Eff es) Application
 serveStatics src =
   Tagged $
     staticApp $
-      defaultFileServerSettings src
+      (defaultFileServerSettings src)
+        { ssRedirectToIndex = True
+        }
