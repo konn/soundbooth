@@ -3,3 +3,11 @@ source-repository-package
   location: https://github.com/konn/ghc-wasm-earthly.git
   tag: 002bb26db71c5e43533b0b7be731d1d9d99ac63d
   subdir: microaeson-generics ghc-wasm-compat
+
+package aeson
+  flags: -ordered-keymap
+
+constraints:
+  jsaddle == 0.9.9.0,
+  jsaddle-dom == 0.9.9.0,
+  aeson == 2.2.1.0,

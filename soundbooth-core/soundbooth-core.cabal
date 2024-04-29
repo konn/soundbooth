@@ -49,13 +49,12 @@ common defaults
 library
   import: defaults
   build-depends:
+    aeson,
     bytestring,
     cereal,
     containers,
     deepseq,
     hashable,
-    microaeson,
-    microaeson-generics,
     text,
 
   -- cabal-gild: discover src

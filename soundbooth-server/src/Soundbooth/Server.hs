@@ -27,8 +27,6 @@ import Control.Foldl qualified as L
 import Control.Lens (ifolded, withIndex)
 import Control.Monad (forM_, when)
 import Data.Aeson qualified as J
-import Data.Aeson.Micro qualified as MicroJ
-import Data.Aeson.Micro.Generics ()
 import Data.Bifoldable (bimapM_)
 import Data.ByteString.Char8 qualified as BS8
 import Data.Function ((&))
@@ -39,6 +37,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import Data.Vector qualified as V
 import Data.Yaml qualified as Y
 import DeferredFolds.UnfoldlM qualified as U
@@ -55,15 +54,11 @@ import Effectful.FileSystem.IO (stderr)
 import Effectful.FileSystem.IO.ByteString (hPutStrLn)
 import Effectful.Reader.Static (Reader, ask, asks, runReader)
 import Focus qualified
-import GHC.Generics (Generic, Generically (..))
+import GHC.Generics
 import Options.Applicative qualified as Opts
 import Soundbooth.Common.Types
 import StmContainers.Map qualified as TMap
 import Streaming.Prelude qualified as S
-
-deriving newtype instance J.FromJSON SoundName
-
-deriving newtype instance J.ToJSON SoundName
 
 newtype Cues = Cues {cues :: V.Vector Cue}
   deriving (Show, Eq, Ord, Generic)
@@ -71,7 +66,6 @@ newtype Cues = Cues {cues :: V.Vector Cue}
 
 data Cue = Cue {name :: !SoundName, path :: !Text}
   deriving (Show, Eq, Ord, Generic)
-  deriving (MicroJ.FromJSON, MicroJ.ToJSON) via Generically Cue
   deriving anyclass (J.FromJSON, J.ToJSON)
 
 data Options = Options
@@ -248,8 +242,8 @@ withSample sn k = do
 send :: (FileSystem :> es, Console :> es, Concurrent :> es) => TBQueue Request -> Eff es ()
 send reqs =
   S.repeatM Console.getLine
-    & S.map MicroJ.decodeStrict
-    & S.mapM_ (maybe (hPutStrLn stderr "Invalid input") (atomically . writeTBQueue reqs))
+    & S.map J.eitherDecodeStrict
+    & S.mapM_ (either (hPutStrLn stderr . TE.encodeUtf8 . T.pack . ("Invalid input: " <>)) (atomically . writeTBQueue reqs))
 
 defaultMain :: IO ()
 defaultMain = defaultMainWith =<< Opts.execParser optionsP

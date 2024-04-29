@@ -15,13 +15,12 @@ module Soundbooth.Common.Types (
 ) where
 
 import Control.DeepSeq (NFData)
-import Data.Aeson.Micro (FromJSON, ToJSON)
-import Data.Aeson.Micro.Generics ()
+import Data.Aeson
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import Data.String (IsString)
 import Data.Text (Text)
-import GHC.Generics (Generic, Generically (..))
+import GHC.Generics (Generic)
 
 newtype SoundName = SoundName Text
   deriving (Show, Eq, Ord, Generic)
@@ -32,14 +31,14 @@ data Request
   | Stop !SoundName
   | StopAll
   deriving (Show, Eq, Ord, Generic)
-  deriving (FromJSON, ToJSON) via Generically Request
+  deriving anyclass (FromJSON, ToJSON)
 
 data Response = Ok | UnknownSound !SoundName | Error !Text
   deriving (Show, Eq, Ord, Generic)
-  deriving (FromJSON, ToJSON) via Generically Response
+  deriving anyclass (FromJSON, ToJSON)
 
 data Event
   = Playing !(NonEmpty SoundName)
   | Stopped !(NonEmpty SoundName)
   deriving (Show, Eq, Ord, Generic)
-  deriving (FromJSON, ToJSON) via Generically Event
+  deriving anyclass (FromJSON, ToJSON)
