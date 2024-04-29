@@ -16,7 +16,6 @@ module Soundbooth.Server.App.REPL (
 ) where
 
 import Control.Applicative ((<**>))
-import Control.Concurrent.STM (TBQueue, newTBQueueIO)
 import Data.Aeson qualified as J
 import Data.Function ((&))
 import Data.Text qualified as T
@@ -25,7 +24,7 @@ import Data.Yaml qualified as Y
 import Effectful
 import Effectful.Audio
 import Effectful.Concurrent.Async
-import Effectful.Concurrent.STM (atomically, readTBQueue, writeTBQueue)
+import Effectful.Concurrent.STM (atomically)
 import Effectful.Console.ByteString (Console, runConsole)
 import Effectful.Console.ByteString qualified as Console
 import Effectful.FileSystem (FileSystem, runFileSystem)
@@ -97,22 +96,20 @@ optionsP = Opts.info (parser <**> Opts.helper) (Opts.fullDesc <> Opts.progDesc "
 
 defaultMainWith :: Options -> IO ()
 defaultMainWith Options {..} = do
-  evtQ <- newTBQueueIO 16
-  respQ <- newTBQueueIO 16
-  reqQ <- newTBQueueIO 16
-  let qs = PlayerQueues {..}
   cs <- Y.decodeFileThrow @_ @Cues cueFile
   runEff $ runConsole $ runConcurrent $ do
-    runFileSystem (send reqQ)
-      `race_` S.print (S.repeatM (atomically (readTBQueue respQ)))
-      `race_` S.print (S.repeatM (atomically (readTBQueue evtQ)))
+    qs <- newPlayerQueues 64
+    conn <- subscribe qs
+    runFileSystem (send (atomically . sendRequest conn))
+      `race_` S.print (S.repeatM (atomically (readResponse conn)))
+      `race_` S.print (S.repeatM (atomically (readEvent conn)))
       `race_` runPlayer playerOpts qs cs
 
-send :: (FileSystem :> es, Console :> es, Concurrent :> es) => TBQueue Request -> Eff es ()
-send reqs =
+send :: (FileSystem :> es, Console :> es) => (Request -> Eff es ()) -> Eff es ()
+send put =
   S.repeatM Console.getLine
     & S.map J.eitherDecodeStrict
-    & S.mapM_ (either (hPutStrLn stderr . TE.encodeUtf8 . T.pack . ("Invalid input: " <>)) (atomically . writeTBQueue reqs))
+    & S.mapM_ (either (hPutStrLn stderr . TE.encodeUtf8 . T.pack . ("Invalid input: " <>)) put)
 
 defaultMain :: IO ()
 defaultMain = defaultMainWith =<< Opts.execParser optionsP

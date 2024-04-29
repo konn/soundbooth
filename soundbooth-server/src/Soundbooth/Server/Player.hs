@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -17,7 +18,13 @@ module Soundbooth.Server.Player (
   Response (..),
   Event (..),
   PlayerOptions (..),
-  PlayerQueues (..),
+  newPlayerQueues,
+  PlayerQueues (),
+  subscribe,
+  ClientQueues (),
+  readEvent,
+  readResponse,
+  sendRequest,
 ) where
 
 import Control.Foldl qualified as L
@@ -41,12 +48,13 @@ import Effectful
 import Effectful.Audio
 import Effectful.Concurrent (threadDelay)
 import Effectful.Concurrent.Async
-import Effectful.Concurrent.STM (TBQueue, atomically, readTBQueue, writeTBQueue)
+import Effectful.Concurrent.STM
 import Effectful.Dispatch.Static (unsafeEff_)
 import Effectful.Error.Static (Error, runErrorNoCallStackWith)
-import Effectful.Reader.Static (Reader, ask, asks, runReader)
+import Effectful.Reader.Static (Reader, asks, runReader)
 import Focus qualified
 import GHC.Generics
+import Numeric.Natural
 import Soundbooth.Common.Types
 import StmContainers.Map qualified as TMap
 import Streaming.Prelude qualified as S
@@ -60,13 +68,19 @@ data Cue = Cue {name :: !SoundName, path :: !Text}
   deriving anyclass (J.FromJSON, J.ToJSON)
 
 data PlayerQueues = PlayerQueues
-  { evtQ :: TBQueue Event
-  , respQ :: TBQueue Response
+  { evtQ :: TChan Event
+  , respQ :: TChan Response
+  , reqQ :: TBQueue Request
+  }
+
+data ClientQueues = ClientQueues
+  { evtQ :: TChan Event
+  , respQ :: TChan Response
   , reqQ :: TBQueue Request
   }
 
 runPlayer :: (IOE :> es, Concurrent :> es) => PlayerOptions -> PlayerQueues -> Cues -> Eff es ()
-runPlayer opts PlayerQueues {..} cs = do
+runPlayer opts queues cs = do
   playing <- unsafeEff_ TMap.newIO
   runAudio opts.audioOptions $ do
     samples <- OMap.fromList <$> mapM (\Cue {..} -> (name,) <$> sampleFromFile (T.unpack path) 1.0) (V.toList cs.cues)
@@ -82,11 +96,24 @@ data PlayerOptions = PlayerOptions
 newtype PlayerEnv = ServerEnv {samples :: OMap SoundName Sample}
   deriving (Generic)
 
+readEvent :: ClientQueues -> STM Event
+readEvent ClientQueues {evtQ} = readTChan evtQ
+
+readResponse :: ClientQueues -> STM Response
+readResponse ClientQueues {respQ} = readTChan respQ
+
+sendRequest :: ClientQueues -> Request -> STM ()
+sendRequest ClientQueues {reqQ} = writeTBQueue reqQ
+
+subscribe :: (Concurrent :> es) => PlayerQueues -> Eff es ClientQueues
+subscribe qs = do
+  evtQ <- atomically $ dupTChan qs.evtQ
+  respQ <- atomically $ dupTChan qs.respQ
+  pure ClientQueues {reqQ = qs.reqQ, ..}
+
 data PlayerState = ServerState
   { playing :: TMap.Map SoundName Sound
-  , evtQ :: TBQueue Event
-  , respQ :: TBQueue Response
-  , reqQ :: TBQueue Request
+  , queues :: PlayerQueues
   }
   deriving (Generic)
 
@@ -119,8 +146,8 @@ checkIfStopped = go mempty
       atomically $ forM_ inactives $ (`TMap.delete` sst)
       let !stopped = inactives `Set.union` (Map.keysSet playing Set.\\ Map.keysSet nowPlaying)
       forM_ (NE.nonEmpty $ Set.toList stopped) $ \stops -> do
-        evts <- asks @PlayerState (.evtQ)
-        atomically $ writeTBQueue evts $ Stopped stops
+        evts <- asks @PlayerState (.queues.evtQ)
+        atomically $ writeTChan evts $ Stopped stops
       go nowPlaying
 
 mainLoop ::
@@ -131,15 +158,22 @@ mainLoop ::
   ) =>
   Eff es ()
 mainLoop = do
-  ServerState {..} <- ask
+  PlayerQueues {..} <- asks @PlayerState (.queues)
   S.repeatM (atomically $ readTBQueue reqQ)
     & S.mapM processReq
     & S.mapM_
       ( atomically
           . bimapM_
-            (mapM_ $ writeTBQueue respQ)
-            (mapM_ $ writeTBQueue evtQ)
+            (mapM_ $ writeTChan respQ)
+            (mapM_ $ writeTChan evtQ)
       )
+
+newPlayerQueues :: (Concurrent :> es) => Natural -> Eff es PlayerQueues
+newPlayerQueues size = do
+  evtQ <- newBroadcastTChanIO
+  respQ <- newBroadcastTChanIO
+  reqQ <- newTBQueueIO size
+  pure PlayerQueues {..}
 
 processReq ::
   ( Reader PlayerState :> es

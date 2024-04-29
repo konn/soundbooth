@@ -82,6 +82,7 @@ library
     servant-server,
     servant-websockets,
     stm,
+    stm-chans,
     stm-containers,
     streaming,
     streaming-bytestring,

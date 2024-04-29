@@ -17,6 +17,7 @@ module Effectful.WebSockets (
 ) where
 
 import Effectful
+import Effectful.Concurrent (Concurrent)
 import Effectful.Dispatch.Dynamic
 import Network.WebSockets (Connection, WebSocketsData (..))
 import Network.WebSockets qualified as WS
@@ -45,7 +46,7 @@ sendPing = fmap send . SendPing
 sendClose :: (WebSocketsData a, WebSockets :> es) => Connection -> a -> Eff es ()
 sendClose = fmap send . SendClose
 
-runWebSocketsIO :: (IOE :> es) => Eff (WebSockets : es) a -> Eff es a
+runWebSocketsIO :: (Concurrent :> es, IOE :> es) => Eff (WebSockets : es) a -> Eff es a
 runWebSocketsIO = interpret $ \_ -> \case
   SendTextData conn a -> liftIO $ WS.sendTextData conn a
   SendBinaryData conn a -> liftIO $ WS.sendBinaryData conn a

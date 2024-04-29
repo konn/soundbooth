@@ -22,11 +22,11 @@ import Effectful (Eff, runEff)
 import Effectful qualified as Eff
 import Effectful.Audio
 import Effectful.Concurrent.Async
-import Effectful.Concurrent.STM (atomically, newTBQueueIO, readTBQueue, writeTBQueue)
+import Effectful.Concurrent.STM (atomically)
 import Effectful.Console.ByteString (runConsole)
 import Effectful.Log
 import Effectful.Log.Extra (runStdErrLogger)
-import Effectful.Reader.Static (Reader, asks, runReader)
+import Effectful.Reader.Static (Reader, ask, runReader)
 import Effectful.Servant
 import Effectful.WebSockets qualified as WS
 import GHC.Generics
@@ -147,10 +147,7 @@ defaultMainWith Options {..} = do
       runConsole $
         runConcurrent $
           runReader backendOpts $ do
-            evtQ <- newTBQueueIO 16
-            respQ <- newTBQueueIO 16
-            reqQ <- newTBQueueIO 16
-            let qs = PlayerQueues {..}
+            qs <- newPlayerQueues 16
             runReader qs $
               runPlayer playerOpts qs cs
                 `race_` WS.runWebSocketsIO do
@@ -181,25 +178,25 @@ handleWs ::
   WS.Connection ->
   Eff es ()
 handleWs conn = do
-  reqQ <- asks @PlayerQueues (.reqQ)
-  atomically $ writeTBQueue reqQ GetPlaylist
-  sendResp `race_` sendEvt `race_` recvr
+  qs <- subscribe =<< ask @PlayerQueues
+  atomically $ sendRequest qs GetPlaylist
+  runReader qs $ sendResp `race_` sendEvt `race_` recvr
   where
     sendEvt = do
-      evtQ <- asks @PlayerQueues (.evtQ)
-      S.repeatM (atomically (readTBQueue evtQ))
+      qs <- ask @ClientQueues
+      S.repeatM (atomically $ readEvent qs)
         & S.chain (logInfo "Sending event to conn: ")
         & S.mapM_ (WS.sendTextData conn)
     sendResp = do
-      respQ <- asks @PlayerQueues (.respQ)
-      S.repeatM (atomically (readTBQueue respQ))
+      qs <- ask @ClientQueues
+      S.repeatM (atomically (readResponse qs))
         & S.chain (logInfo "Sending resp to conn: ")
         & S.mapM_ (WS.sendTextData conn)
     recvr = do
-      reqQ <- asks @PlayerQueues (.reqQ)
+      qs <- ask @ClientQueues
       S.repeatM (WS.receiveData conn)
         & S.chain (logInfo "Request: ")
-        & S.mapM_ (atomically . writeTBQueue reqQ)
+        & S.mapM_ (atomically . sendRequest qs)
 
 serveStatics :: FilePath -> Tagged (Eff es) Application
 serveStatics src =
