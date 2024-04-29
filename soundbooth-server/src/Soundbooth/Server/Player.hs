@@ -260,7 +260,7 @@ processReq (CrossFade dur froms tos) = do
           (liftA2 (liftA2 (,)) <$> (pure . pure) <*> flip TMap.lookup playing)
           (NE.toList froms)
   tos' <-
-    mapM (mapM (\s -> play s 1.0 1.0 0.0 1.0)) $
+    mapM (mapM (\s -> play s 0.0 0.0 0.0 1.0)) $
       mapMaybe (liftA2 (,) <$> pure <*> (`OMap.lookup` smpls)) (NE.toList tos)
 
   forM_ [0 .. dur.steps] \i -> do
@@ -273,12 +273,16 @@ processReq (CrossFade dur froms tos) = do
             atomically $
               TMap.focus Focus.delete sn playing
       )
-      `race_` forConcurrently_ tos' \(sn, s) -> do
+      `concurrently_` forConcurrently_ tos' \(sn, s) -> do
         b <- update s False (inLevel i) (inLevel i) 0.0 1.0
         unless b $
           atomically $
-            TMap.focus Focus.delete sn playing
+            TMap.insert s sn playing
   mapM_ (stop . snd) froms'
+  forM_ tos' \(sn, s) -> do
+    atomically $ TMap.insert s sn playing
+  forM_ froms' \(sn, _) -> do
+    atomically $ TMap.delete sn playing
   pure
     ( [Ok]
     , catMaybes
