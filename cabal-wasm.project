@@ -8,4 +8,4 @@ packages:
   soundbooth-core
   soundbooth-frontend
 
-active-repositories: hackage.haskell.org,  head.hackage.ghc.haskell.org
+active-repositories: hackage.haskell.org, head.hackage.ghc.haskell.org
