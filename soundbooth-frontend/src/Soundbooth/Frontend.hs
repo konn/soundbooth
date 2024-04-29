@@ -12,6 +12,7 @@ import Data.Aeson.Types (FromJSON (..))
 import Data.Coerce (coerce)
 import Data.Foldable (foldMap')
 import Data.Generics.Labels ()
+import Data.List (isInfixOf)
 import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
 import Data.Map.Ordered.Strict qualified as OMap
@@ -44,7 +45,15 @@ toWSUri :: URI -> URL
 toWSUri = handleWsProto >>> handleWsPath >>> show >>> T.pack >>> URL
 
 handleWsPath :: URI -> URI
-handleWsPath = #uriPath %~ (<> "/ws")
+handleWsPath =
+  #uriPath
+    %~ ( T.pack >>> \fp ->
+          let paren =
+                if "." `T.isInfixOf` T.takeWhileEnd (/= '/') fp
+                  then T.dropWhileEnd (/= '/') fp
+                  else fp
+           in T.unpack $ T.dropWhileEnd (== '/') paren <> "/ws"
+       )
 
 handleWsProto :: URI -> URI
 handleWsProto uri
