@@ -17,6 +17,7 @@ import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
 import Data.Map.Ordered.Strict qualified as OMap
 import Data.Maybe (maybeToList)
+import Data.String (fromString)
 import Data.Text qualified as T
 import Data.Vector qualified as V
 import GHC.Generics
@@ -72,26 +73,44 @@ updateModel (Websock (WebSocketMessage (Event evt))) m = handleEvent evt m
 updateModel (Websock (WebSocketMessage (Response rsp))) m = handleResponse rsp m
 updateModel (Websock _) m = noEff m
 updateModel (Toggle sound) m =
-  m <# do NoOp <$ send (toggleCmd m sound)
+  let (m', cmd) = toggleCmd m sound
+   in m' <# do NoOp <$ send cmd
 updateModel NoOp m = noEff m
-updateModel (Request req) m = m <# do NoOp <$ send req
-updateModel ToggleFadeIn m = noEff $ m & #fadeIn %~ not
-updateModel ToggleFadeOut m = noEff $ m & #fadeOut %~ not
-updateModel ToggleCrossFade m = noEff $ m & #crossFade %~ not
+updateModel (Request req) m = m <# do NoOp <$ consoleLog ("Requesting: " <> fromString (show req)) <* send req
+updateModel ToggleFadeIn m =
+  (m & #fadeIn %~ not)
+    <@ consoleLog "ToggleFadeIn"
+updateModel ToggleFadeOut m =
+  (m & #fadeOut %~ not)
+    <@ consoleLog "ToggleFadeOut"
+updateModel ToggleCrossFade m =
+  (m & #crossFade %~ not)
+    <@ consoleLog "ToggleCrossFade"
 
-toggleCmd :: Model -> SoundName -> Request
-toggleCmd Model {..} sn =
+(<@) :: model -> JSM () -> Effect action model
+m <@ act = Effect m [const act]
+
+toggleCmd :: Model -> SoundName -> (Model, Request)
+toggleCmd m@Model {..} sn =
   case OMap.lookup sn playlist of
     Just Playing
-      | fadeOut -> FadeOut Fading {steps = 10, duration = 3.0} sn
-      | otherwise -> Stop sn
+      | fadeOut -> (m {fadeOut = False}, FadeOut Fading {steps = 10, duration = 3.0} sn)
+      | otherwise -> (m, Stop sn)
     _
       | crossFade
       , Just froms <-
           NE.nonEmpty $ filter ((== Playing) . snd) $ OMap.assocs playlist ->
-          CrossFade Fading {steps = 10, duration = 3.0} (fst <$> froms) (sn NE.:| [])
-      | fadeIn -> FadeIn Fading {steps = 10, duration = 3.0} sn
-      | otherwise -> Play sn
+          ( m {crossFade = False}
+          , CrossFade
+              Fading {steps = 10, duration = 3.0}
+              (fst <$> froms)
+              (sn NE.:| [])
+          )
+      | fadeIn ->
+          ( m {fadeIn = False}
+          , FadeIn Fading {steps = 10, duration = 3.0} sn
+          )
+      | otherwise -> (m, Play sn)
 
 handleResponse :: Response -> Model -> Effect Action Model
 handleResponse = const noEff
@@ -126,13 +145,13 @@ viewModel Model {..} =
             [class_ "soundbooth"]
             [ section_
                 [class_ "buttons"]
-                [ a_
+                [ button_
                     [onClick $ Request GetPlaylist, class_ "button is-success is-outlined"]
                     [mdiDark "sync"]
-                , a_
+                , button_
                     [onClick $ Request StopAll, class_ "button is-danger is-outlined"]
                     [mdiDark "stop"]
-                , a_
+                , button_
                     [ onClick ToggleFadeIn
                     , class_ $
                         unwords $
@@ -141,7 +160,7 @@ viewModel Model {..} =
                             : if fadeIn then ["is-active"] else ["is-outlined"]
                     ]
                     [mdiDark "arrow-top-right"]
-                , a_
+                , button_
                     [ onClick ToggleFadeOut
                     , class_ $
                         unwords $
@@ -150,7 +169,7 @@ viewModel Model {..} =
                             : ["is-outlined" | not fadeOut]
                     ]
                     [mdiDark "arrow-bottom-right"]
-                , a_
+                , button_
                     [ onClick ToggleCrossFade
                     , class_ $
                         unwords $
