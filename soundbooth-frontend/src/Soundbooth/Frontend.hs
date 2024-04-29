@@ -28,7 +28,7 @@ defaultMain = do
   uri <- toWSUri <$> getCurrentURI
   startApp App {subs = toSubs uri, view = viewModel, ..}
   where
-    initialAction = SyncPlaylist
+    initialAction = NoOp
     model = Model {playlist = OMap.empty}
     update = updateModel
 
