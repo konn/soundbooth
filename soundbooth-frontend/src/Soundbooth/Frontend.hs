@@ -12,7 +12,6 @@ import Data.Aeson.Types (FromJSON (..))
 import Data.Coerce (coerce)
 import Data.Foldable (foldMap')
 import Data.Generics.Labels ()
-import Data.List (isInfixOf)
 import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
 import Data.Map.Ordered.Strict qualified as OMap

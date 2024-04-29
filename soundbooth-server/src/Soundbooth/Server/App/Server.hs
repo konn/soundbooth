@@ -17,6 +17,7 @@ module Soundbooth.Server.App.Server (
 
 import Control.Applicative ((<**>))
 import Data.Function ((&))
+import Data.Text qualified as T
 import Data.Yaml qualified as Y
 import Effectful (Eff, runEff)
 import Effectful qualified as Eff
@@ -24,6 +25,8 @@ import Effectful.Audio
 import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM (atomically, newTBQueueIO, readTBQueue, writeTBQueue)
 import Effectful.Console.ByteString (runConsole)
+import Effectful.Log
+import Effectful.Log.Extra (runStdErrLogger)
 import Effectful.Reader.Static (Reader, asks, runReader)
 import Effectful.Servant
 import Effectful.WebSockets qualified as WS
@@ -141,24 +144,26 @@ defaultMainWith :: Options -> IO ()
 defaultMainWith Options {..} = do
   cs <- Y.decodeFileThrow @_ @Cues cueFile
   runEff $
-    runConsole $
-      runConcurrent $
-        runReader backendOpts $ do
-          evtQ <- newTBQueueIO 16
-          respQ <- newTBQueueIO 16
-          reqQ <- newTBQueueIO 16
-          let qs = PlayerQueues {..}
-          runReader qs $
-            runPlayer playerOpts qs cs
-              `race_` WS.runWebSocketsIO do
-                runWarpServerSettings @TheAPI
-                  (Warp.defaultSettings & Warp.setPort backendOpts.port)
-                  (genericServerT @APIRoutes $ theServer backendOpts)
+    runStdErrLogger "backend" LogTrace $
+      runConsole $
+        runConcurrent $
+          runReader backendOpts $ do
+            evtQ <- newTBQueueIO 16
+            respQ <- newTBQueueIO 16
+            reqQ <- newTBQueueIO 16
+            let qs = PlayerQueues {..}
+            runReader qs $
+              runPlayer playerOpts qs cs
+                `race_` WS.runWebSocketsIO do
+                  runWarpServerSettings @TheAPI
+                    (Warp.defaultSettings & Warp.setPort backendOpts.port)
+                    (genericServerT @APIRoutes $ theServer backendOpts)
 
 theServer ::
   ( Reader PlayerQueues ∈ es
   , Concurrent ∈ es
   , WS.WebSockets ∈ es
+  , Log Eff.:> es
   ) =>
   BackendOptions ->
   APIRoutes (AsServerT (Eff es))
@@ -172,6 +177,7 @@ handleWs ::
   ( Concurrent ∈ es
   , Reader PlayerQueues ∈ es
   , WS.WebSockets ∈ es
+  , Log Eff.:> es
   ) =>
   WS.Connection ->
   Eff es ()
@@ -180,14 +186,17 @@ handleWs conn = sendResp `race_` sendEvt `race_` recvr
     sendEvt = do
       evtQ <- asks @PlayerQueues (.evtQ)
       S.repeatM (atomically (readTBQueue evtQ))
+        & S.chain (logInfo "Sending event to conn: " . T.pack . show)
         & S.mapM_ (WS.sendTextData conn)
     sendResp = do
       respQ <- asks @PlayerQueues (.respQ)
       S.repeatM (atomically (readTBQueue respQ))
+        & S.chain (logInfo "Sending resp to conn: " . T.pack . show)
         & S.mapM_ (WS.sendTextData conn)
     recvr = do
       reqQ <- asks @PlayerQueues (.reqQ)
       S.repeatM (WS.receiveData conn)
+        & S.chain (logInfo "Request: " . T.pack . show)
         & S.mapM_ (atomically . writeTBQueue reqQ)
 
 serveStatics :: FilePath -> Tagged (Eff es) Application
