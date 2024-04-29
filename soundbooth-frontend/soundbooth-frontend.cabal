@@ -41,6 +41,7 @@ common defaults
   build-depends: base >=4.7 && <5
 
   if !os(wasi)
+    build-depends: ghc-wasm-compat
     ghc-options:
       -fplugin
       GHC.Wasm.FFI.Plugin
