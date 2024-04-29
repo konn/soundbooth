@@ -14,6 +14,7 @@ module Soundbooth.Common.Types (
   Event (..),
   Status (..),
   Playlist (..),
+  Fading (..),
 ) where
 
 import Control.DeepSeq (NFData)
@@ -39,9 +40,16 @@ data Status = Idle | Playing
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON, NFData, Hashable)
 
+data Fading = Fading {duration :: !Double, steps :: !Int}
+  deriving (Show, Eq, Ord, Generic)
+  deriving anyclass (FromJSON, ToJSON, NFData)
+
 data Request
   = Play !SoundName
   | Stop !SoundName
+  | FadeIn !Fading !SoundName
+  | FadeOut !Fading !SoundName
+  | CrossFade !Fading !(NonEmpty SoundName) !(NonEmpty SoundName)
   | StopAll
   | GetPlaylist
   deriving (Show, Eq, Ord, Generic)
