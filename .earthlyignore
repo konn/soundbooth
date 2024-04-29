@@ -7,6 +7,6 @@ cabal.project*
 Earthfile
 workspace
 dist-newstyle
-soundbooth-server
+soundbooth-server/**
 cabal-scaffold.yaml
 README.md

@@ -43,6 +43,7 @@ data Request
   = Play !SoundName
   | Stop !SoundName
   | StopAll
+  | GetPlaylist
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
 

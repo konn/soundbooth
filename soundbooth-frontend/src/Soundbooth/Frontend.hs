@@ -5,6 +5,7 @@
 module Soundbooth.Frontend (defaultMain) where
 
 import Control.Applicative ((<|>))
+import Control.Arrow ((>>>))
 import Control.Lens
 import Data.Aeson (FromJSON)
 import Data.Aeson.Types (FromJSON (..))
@@ -27,7 +28,7 @@ defaultMain = do
   uri <- toWSUri <$> getCurrentURI
   startApp App {subs = toSubs uri, view = viewModel, ..}
   where
-    initialAction = NoOp
+    initialAction = SyncPlaylist
     model = Model {playlist = OMap.empty}
     update = updateModel
 
@@ -40,16 +41,24 @@ defaultMain = do
     logLevel = Off
 
 toWSUri :: URI -> URL
-toWSUri uri
-  | "https:" <- uri.uriScheme = URL $ T.pack $ show $ uri {uriScheme = "wss:"}
-  | otherwise = URL $ T.pack $ show $ uri {uriScheme = "ws:"}
+toWSUri = handleWsProto >>> handleWsPath >>> show >>> T.pack >>> URL
+
+handleWsPath :: URI -> URI
+handleWsPath = #uriPath %~ (<> "/ws")
+
+handleWsProto :: URI -> URI
+handleWsProto uri
+  | "https:" <- uri.uriScheme = uri {uriScheme = "wss:"}
+  | otherwise = uri {uriScheme = "ws:"}
 
 updateModel :: Action -> Model -> Effect Action Model
 updateModel (Websock (WebSocketMessage (Event evt))) m = handleEvent evt m
 updateModel (Websock (WebSocketMessage (Response rsp))) m = handleResponse rsp m
+updateModel (Websock _) m = noEff m
 updateModel (Toggle sound) m =
   m <# do NoOp <$ send (toggleCmd m sound)
-updateModel _ m = noEff m
+updateModel NoOp m = noEff m
+updateModel SyncPlaylist m = m <# do NoOp <$ send GetPlaylist
 
 toggleCmd :: Model -> SoundName -> Request
 toggleCmd Model {..} sn =
@@ -106,5 +115,6 @@ instance FromJSON EventOrResponse where
 data Action
   = Websock (WebSocket EventOrResponse)
   | Toggle SoundName
+  | SyncPlaylist
   | NoOp
   deriving (Show, Eq, Generic)

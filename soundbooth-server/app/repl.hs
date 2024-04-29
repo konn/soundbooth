@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Soundbooth.Server (defaultMain)
+import Soundbooth.Server.App.REPL (defaultMain)
 
 main :: IO ()
 main = defaultMain

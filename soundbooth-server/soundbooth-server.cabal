@@ -50,7 +50,11 @@ library
   -- cabal-gild: discover src
   exposed-modules:
     Effectful.Audio
-    Soundbooth.Server
+    Effectful.WebSockets
+    Soundbooth.Server.App.REPL
+    Soundbooth.Server.App.Server
+    Soundbooth.Server.Orphans
+    Soundbooth.Server.Player
 
   build-depends:
     aeson,
@@ -65,9 +69,18 @@ library
     generic-lens,
     hashable,
     lens,
+    log-base,
+    log-effectful,
+    log-effectful-extra,
+    mtl,
     optparse-applicative,
+    ordered-containers,
     proteaaudio,
     safe-exceptions,
+    servant,
+    servant-effectful,
+    servant-server,
+    servant-websockets,
     stm,
     stm-containers,
     streaming,
@@ -77,13 +90,25 @@ library
     unordered-containers,
     vector,
     wai,
+    wai-app-static,
     warp,
     websockets,
     yaml,
 
+executable soundbooth-repl
+  import: defaults
+  main-is: repl.hs
+  hs-source-dirs: app
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+
+  build-depends: soundbooth-server
+
 executable soundbooth
   import: defaults
-  main-is: Main.hs
+  main-is: server.hs
   hs-source-dirs: app
   ghc-options:
     -threaded
