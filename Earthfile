@@ -37,8 +37,5 @@ BUILD:
 
   SAVE ARTIFACT ./dist/ AS LOCAL _build/${outdir}/
 
-hello-js:
-  DO +BUILD --target=wasm-jsffi-ghc-demo:exe:console-log
-
-hello-cf:
-  DO +BUILD --target=cloudflare-worker:exe:hello-worker
+frontend:
+  DO +BUILD --target=soundbooth-frontend:exe:soundbooth-frontend
