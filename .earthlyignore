@@ -1,0 +1,12 @@
+_*
+fourmolu.yaml
+cabal.project*
+.vscode
+.github
+.git
+Earthfile
+workspace
+dist-newstyle
+soundbooth-server
+cabal-scaffold.yaml
+README.md

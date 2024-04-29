@@ -24,7 +24,7 @@ BUILD:
       --mount ${MOUNT_DIST_NEWSTYLE} \
       ${CABAL} build  ${target}
   # From frontend/build.sh in tweag/ghc-wasm-miso-examples
-  LET HS_WASM_PATH=$(${CABAL} list-bin ${target})
+  LET HS_WASM_PATH=$(${CABAL} list-bin -v0 ${target})
   LET WASM_LIB=$(wasm32-wasi-ghc --print-libdir)
   LET DEST=dist/${wasm}
   RUN mkdir -p dist
@@ -32,7 +32,7 @@ BUILD:
   RUN --mount ${MOUNT_DIST_NEWSTYLE} wizer --allow-wasi --wasm-bulk-memory true --init-func _initialize -o dist/${wasm} "${HS_WASM_PATH}"
   RUN wasm-opt -Oz dist/${wasm} -o dist/${wasm}
   RUN wasm-tools strip -o dist/${wasm} dist/${wasm}
-  RUN cp wasm-jsffi-ghc-demo/data/run.ts dist/run.ts
+  RUN cp wasm-scripts/run.ts dist/run.ts
   RUN cp *.js dist/
 
   # Use deno to run the console-log demo
