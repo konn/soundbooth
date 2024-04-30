@@ -55,6 +55,7 @@ library
     Soundbooth.Server.App.Server
     Soundbooth.Server.Orphans
     Soundbooth.Server.Player
+    Soundbooth.Server.Types
 
   build-depends:
     aeson,

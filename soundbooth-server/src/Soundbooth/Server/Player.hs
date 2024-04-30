@@ -34,7 +34,6 @@ import Control.Foldl qualified as L
 import Control.Lens (ifolded, withIndex)
 import Control.Monad (forM_, unless, when)
 import Control.Monad.Trans (lift)
-import Data.Aeson qualified as J
 import Data.Foldable (foldl')
 import Data.Function ((&))
 import Data.Functor (void)
@@ -48,7 +47,6 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, mapMaybe)
 import Data.Ratio ((%))
 import Data.Set qualified as Set
-import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Vector qualified as V
 import DeferredFolds.UnfoldlM qualified as U
@@ -61,90 +59,11 @@ import Effectful.Dispatch.Static (unsafeEff_)
 import Effectful.Reader.Static (Reader, asks, runReader)
 import Focus qualified
 import GHC.Generics
-import Numeric.Natural
 import Soundbooth.Common.Types
+import Soundbooth.Server.Types
 import StmContainers.Map qualified as TMap
 import Streaming qualified as S
 import Streaming.Prelude qualified as S
-
-data Config = Config {files :: V.Vector Music, cues :: V.Vector RawCue}
-  deriving (Show, Eq, Ord, Generic)
-  deriving anyclass (J.FromJSON, J.ToJSON)
-
-data Music = Music {name :: !SoundName, path :: !Text}
-  deriving (Show, Eq, Ord, Generic)
-  deriving anyclass (J.FromJSON, J.ToJSON)
-
-type RawCue = Cue' SoundName
-
-type Cue = Cue' NamedSample
-
-data CueState
-  = NoCue
-  | Paused !Int
-  | Cued !Int
-  deriving (Show, Eq, Ord, Generic)
-
-data CueManager = CueManager
-  { currentCue :: !(TVar CueState)
-  }
-
-data Cue' a = Cue
-  { name :: Text
-  , commands :: NonEmpty (CueCommand' a)
-  , continue :: Bool
-  }
-  deriving (Show, Eq, Ord, Generic, Generic1, Functor, Foldable, Traversable)
-
-deriving anyclass instance J.ToJSON RawCue
-
-instance J.FromJSON RawCue where
-  parseJSON = J.withObject "{cue}" \o -> do
-    name <- o J..: "name"
-    commands <- o J..: "commands"
-    continue <- o J..:? "continue" J..!= False
-    pure Cue {..}
-
-type RawCueCommand = CueCommand' SoundName
-
-data NamedSample = NamedSample {name :: !SoundName, sample :: !Sample}
-  deriving (Generic)
-
-type CueCommand = CueCommand' NamedSample
-
-data CueCommand' a
-  = PlayCue
-      { play :: NonEmpty a
-      , fadeIn :: Maybe Fading
-      , fadeOut :: Maybe Fading
-      }
-  | CrossFadeTo
-      { crossFadeTo :: NonEmpty a
-      , duration :: !Double
-      , steps :: !Int
-      }
-  deriving (Show, Eq, Ord, Generic, Generic1, Functor, Foldable, Traversable)
-
-cmdOpts :: J.Options
-cmdOpts = J.defaultOptions {J.sumEncoding = J.UntaggedValue}
-
-instance J.FromJSON RawCueCommand where
-  parseJSON = J.genericParseJSON cmdOpts
-
-instance J.ToJSON RawCueCommand where
-  toJSON = J.genericToJSON cmdOpts
-
-data PlayerQueues = PlayerQueues
-  { evtQ :: TChan Event
-  , respQ :: TChan Response
-  , reqQ :: TBQueue Request
-  }
-
-data ClientQueues = ClientQueues
-  { evtQ :: TChan Event
-  , respQ :: TChan Response
-  , reqQ :: TBQueue Request
-  }
 
 runPlayer :: (IOE :> es, Concurrent :> es) => PlayerOptions -> PlayerQueues -> Config -> Eff es ()
 runPlayer opts queues cs = do
@@ -162,24 +81,6 @@ data PlayerOptions = PlayerOptions
 
 newtype PlayerEnv = ServerEnv {samples :: OMap SoundName Sample}
   deriving (Generic)
-
-sendEvent :: PlayerQueues -> Event -> STM ()
-sendEvent PlayerQueues {evtQ} = writeTChan evtQ
-
-readEvent :: ClientQueues -> STM Event
-readEvent ClientQueues {evtQ} = readTChan evtQ
-
-readResponse :: ClientQueues -> STM Response
-readResponse ClientQueues {respQ} = readTChan respQ
-
-sendRequest :: ClientQueues -> Request -> STM ()
-sendRequest ClientQueues {reqQ} = writeTBQueue reqQ
-
-subscribe :: (Concurrent :> es) => PlayerQueues -> Eff es ClientQueues
-subscribe qs = do
-  evtQ <- atomically $ dupTChan qs.evtQ
-  respQ <- atomically $ dupTChan qs.respQ
-  pure ClientQueues {reqQ = qs.reqQ, ..}
 
 data PlayerState = ServerState
   { playing :: TMap.Map SoundName Sound
@@ -238,13 +139,6 @@ mainLoop = do
             (writeTChan evtQ)
       )
 
-newPlayerQueues :: (Concurrent :> es) => Natural -> Eff es PlayerQueues
-newPlayerQueues size = do
-  evtQ <- newBroadcastTChanIO
-  respQ <- newBroadcastTChanIO
-  reqQ <- newTBQueueIO size
-  pure PlayerQueues {..}
-
 processReq ::
   ( Reader PlayerState :> es
   , Concurrent :> es
@@ -265,28 +159,26 @@ processReq GetPlaylist = do
               foldl' (flip $ OMap.alter (const $ Just Playing)) (Idle <$ smpls) pls
   S.yield $ Left Ok
   S.yield $ Right $ CurrentPlaylist pl
-processReq (Play sn) = withSample sn \sample -> do
-  playing <- lift $ asks @PlayerState (.playing)
-  lift $
-    mapM_ soundStop
-      =<< atomically (TMap.focus Focus.lookupAndDelete sn playing)
-  s <- lift $ play sample 1.0 1.0 0.0 1.0
-  S.yield $ Right $ Started $ NE.singleton sn
-  lift $ atomically $ TMap.insert s sn playing
-  S.yield $ Left Ok
-processReq (Stop sn) = do
-  stopped <- lift do
-    playing <- asks @PlayerState (.playing)
-    stopped <-
-      fmap or . mapM stop =<< atomically (TMap.lookup sn playing)
-    when stopped $
-      atomically $
-        TMap.delete sn playing
-    pure stopped
-  when stopped $ S.yield $ Right $ Stopped $ NE.singleton sn
-  S.yield $ Left Ok
+processReq (Play sn) = cutIn sn
+processReq (Stop sn) = cutOut sn
 processReq StopAll = lift stopAll *> S.yield (Left Ok)
-processReq (FadeIn dur sn) = withSample sn \sample -> do
+processReq (FadeIn dur sn) = fadeIn dur sn
+processReq (FadeOut dur sn) = fadeOut dur sn
+processReq (CrossFade dur froms tos) = crossFade dur froms tos
+processReq GetCues = do
+  S.yield $ Left Ok
+  S.yield $ Right $ CurrentCues mempty
+
+fadeIn ::
+  ( Reader PlayerEnv :> es
+  , Reader PlayerState :> es
+  , Audio :> es
+  , Concurrent :> es
+  ) =>
+  Fading ->
+  SoundName ->
+  S.Stream (Of (Either Response Event)) (Eff es) ()
+fadeIn dur sn = withSample sn \sample -> do
   let usec = floor $ 1_000_000 * dur.duration / fromIntegral dur.steps
       level i = fromRational $ fromIntegral i % fromIntegral dur.steps
   playing <- lift $ asks @PlayerState (.playing)
@@ -307,7 +199,17 @@ processReq (FadeIn dur sn) = withSample sn \sample -> do
     threadDelay usec
     update s False (level i) (level i) 0.0 1.0
   S.yield $ Left Ok
-processReq (FadeOut dur sn) = withSample sn \_ -> do
+
+fadeOut ::
+  ( Reader PlayerEnv :> es
+  , Reader PlayerState :> es
+  , Audio :> es
+  , Concurrent :> es
+  ) =>
+  Fading ->
+  SoundName ->
+  S.Stream (Of (Either Response Event)) (Eff es) ()
+fadeOut dur sn = withSample sn \_ -> do
   let usec = floor $ 1_000_000 * dur.duration / fromIntegral dur.steps
       level i = fromRational $ 1 - fromIntegral i % fromIntegral dur.steps
   playing <- lift $ asks @PlayerState (.playing)
@@ -324,7 +226,18 @@ processReq (FadeOut dur sn) = withSample sn \_ -> do
       lift $ atomically (TMap.focus Focus.delete sn playing)
       lift $ void $ stop s
       S.yield $ Left Ok
-processReq (CrossFade dur froms tos) = do
+
+crossFade ::
+  ( Reader PlayerEnv :> es
+  , Reader PlayerState :> es
+  , Audio :> es
+  , Concurrent :> es
+  ) =>
+  Fading ->
+  NonEmpty SoundName ->
+  NonEmpty SoundName ->
+  S.Stream (Of (Either Response Event)) (Eff es) ()
+crossFade dur froms tos = do
   smpls <- lift $ asks @PlayerEnv (.samples)
   let usec = floor $ 1_000_000 * dur.duration / fromIntegral dur.steps
       inLevel i = fromRational $ fromIntegral i % fromIntegral dur.steps
@@ -367,9 +280,43 @@ processReq (CrossFade dur froms tos) = do
     forM_ froms' \(sn, _) -> do
       atomically $ TMap.delete sn playing
   S.yield $ Left Ok
-processReq GetCues = do
+
+cutIn ::
+  ( Reader PlayerEnv :> es
+  , Reader PlayerState :> es
+  , Audio :> es
+  , Concurrent :> es
+  ) =>
+  SoundName ->
+  S.Stream (Of (Either Response Event)) (Eff es) ()
+cutIn sn = withSample sn \sample -> do
+  playing <- lift $ asks @PlayerState (.playing)
+  lift $
+    mapM_ soundStop
+      =<< atomically (TMap.focus Focus.lookupAndDelete sn playing)
+  s <- lift $ play sample 1.0 1.0 0.0 1.0
+  S.yield $ Right $ Started $ NE.singleton sn
+  lift $ atomically $ TMap.insert s sn playing
   S.yield $ Left Ok
-  S.yield $ Right $ CurrentCues mempty
+
+cutOut ::
+  ( Reader PlayerState :> es
+  , Audio :> es
+  , Concurrent :> es
+  ) =>
+  SoundName ->
+  S.Stream (Of (Either Response Event)) (Eff es) ()
+cutOut sn = do
+  stopped <- lift do
+    playing <- asks @PlayerState (.playing)
+    stopped <-
+      fmap or . mapM stop =<< atomically (TMap.lookup sn playing)
+    when stopped $
+      atomically $
+        TMap.delete sn playing
+    pure stopped
+  when stopped $ S.yield $ Right $ Stopped $ NE.singleton sn
+  S.yield $ Left Ok
 
 withSample ::
   (Reader PlayerEnv :> es) =>
