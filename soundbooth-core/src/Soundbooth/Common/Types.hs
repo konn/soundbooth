@@ -52,6 +52,7 @@ data Request
   | CrossFade !Fading !(NonEmpty SoundName) !(NonEmpty SoundName)
   | StopAll
   | GetPlaylist
+  | KeepAlive
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
@@ -63,5 +64,6 @@ data Event
   = Started !(NonEmpty SoundName)
   | Stopped !(NonEmpty SoundName)
   | CurrentPlaylist !Playlist
+  | KeepAliveEvt
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)

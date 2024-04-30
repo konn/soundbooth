@@ -115,6 +115,7 @@ handleEvent (Stopped sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Idle)) sns)
 handleEvent (CurrentPlaylist pl) =
   noEff . (#playlist .~ OMap.fromList (V.toList pl.sounds))
+handleEvent KeepAliveEvt = (<# (NoOp <$ send KeepAlive))
 
 mdiDark :: MisoString -> View a
 mdiDark name =

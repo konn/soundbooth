@@ -16,11 +16,13 @@ module Soundbooth.Server.App.Server (
 ) where
 
 import Control.Applicative ((<**>))
+import Control.Monad (forever)
 import Data.Function ((&))
 import Data.Yaml qualified as Y
 import Effectful (Eff, runEff)
 import Effectful qualified as Eff
 import Effectful.Audio
+import Effectful.Concurrent (threadDelay)
 import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM (atomically)
 import Effectful.Console.ByteString (runConsole)
@@ -154,6 +156,9 @@ defaultMainWith Options {..} = do
                   runWarpServerSettings @TheAPI
                     (Warp.defaultSettings & Warp.setPort backendOpts.port)
                     (genericServerT @APIRoutes $ theServer backendOpts)
+                    `race_` forever do
+                      threadDelay 60_000_000
+                      atomically $ sendEvent qs KeepAliveEvt
 
 theServer ::
   ( Reader PlayerQueues ∈ es

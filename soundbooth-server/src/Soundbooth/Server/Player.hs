@@ -25,6 +25,7 @@ module Soundbooth.Server.Player (
   readEvent,
   readResponse,
   sendRequest,
+  sendEvent,
 ) where
 
 import Control.Foldl qualified as L
@@ -98,6 +99,9 @@ data PlayerOptions = PlayerOptions
 
 newtype PlayerEnv = ServerEnv {samples :: OMap SoundName Sample}
   deriving (Generic)
+
+sendEvent :: PlayerQueues -> Event -> STM ()
+sendEvent PlayerQueues {evtQ} = writeTChan evtQ
 
 readEvent :: ClientQueues -> STM Event
 readEvent ClientQueues {evtQ} = readTChan evtQ
@@ -290,6 +294,7 @@ processReq (CrossFade dur froms tos) = do
         , Started . fmap fst <$> NE.nonEmpty tos'
         ]
     )
+processReq KeepAlive = pure mempty
 
 withSample ::
   (Reader PlayerEnv :> es) =>
