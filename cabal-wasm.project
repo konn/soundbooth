@@ -1,14 +1,12 @@
-with-compiler: wasm32-wasi-ghc-9.10.0.20240412
+ignore-project: False
 import: cabal-common.project
-index-state:
-  hackage.haskell.org 2024-04-28T21:10:00Z,
-  head.hackage.ghc.haskell.org 2024-04-29T07:16:24Z
-
+with-compiler: wasm32-wasi-ghc-9.10.0.20240412
+index-state: hackage.haskell.org 2024-04-28T21:10:00Z
 packages:
   soundbooth-core
   soundbooth-frontend
 
-active-repositories: hackage.haskell.org, head.hackage.ghc.haskell.org:override
+active-repositories: hackage.haskell.org
 constraints:
   jsaddle ==0.9.9.0,
   jsaddle-dom ==0.9.9.0
@@ -50,3 +48,6 @@ package QuickCheck
 
 package reflection
   flags: -template-haskell
+
+packages: https://ghc.gitlab.haskell.org/head.hackage/package/text-short-0.1.5.tar.gz
+packages: https://ghc.gitlab.haskell.org/head.hackage/package/lens-5.2.3.tar.gz

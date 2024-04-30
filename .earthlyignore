@@ -1,5 +1,7 @@
 _*
 fourmolu.yaml
+!cabal-common.project
+!cabal-wasm.project
 cabal.project*
 .vscode
 .github

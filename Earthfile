@@ -1,10 +1,10 @@
 VERSION 0.8
 ARG --global GHC_VER=9.10.0.20240412
-FROM --platform=linux/amd64 ghcr.io/konn/ghc-wasm-earthly:${GHC_VER}
+FROM --platform=linux/amd64 ghcr.io/konn/ghc-wasm-earthly:9.10.0.20240412
 WORKDIR /workdir
 
 ENV GHC=wasm32-wasi-ghc
-ENV CABAL=wasm32-wasi-cabal --project-file=cabal-wasm.project --with-ghc=wasm32-wasi-ghc --with-ghc-pkg=wasm32-wasi-ghc-pkg --with-hsc2hs=wasm32-wasi-hsc2hs
+ENV CABAL=wasm32-wasi-cabal --project-file=cabal-wasm.project --with-ghc-pkg=wasm32-wasi-ghc-pkg --with-hsc2hs=wasm32-wasi-hsc2hs --with-ghc=wasm32-wasi-ghc-9.10.0.20240412 
 
 BUILD:
   FUNCTION
@@ -16,7 +16,7 @@ BUILD:
   COPY --keep-ts . .
   RUN --mount ${MOUNT_GLOBAL_STORE} \
       --mount ${MOUNT_DIST_NEWSTYLE} \
-      ${CABAL} update
+      ${CABAL} update hackage.haskell.org,2024-04-28T21:10:00Z
   RUN --mount ${MOUNT_GLOBAL_STORE} \
       --mount ${MOUNT_DIST_NEWSTYLE} \
       ${CABAL} build --only-dependencies ${target}
