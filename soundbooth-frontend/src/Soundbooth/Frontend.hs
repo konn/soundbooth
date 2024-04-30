@@ -17,7 +17,6 @@ import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
 import Data.Map.Ordered.Strict qualified as OMap
 import Data.Maybe (maybeToList)
-import Data.String (fromString)
 import Data.Text qualified as T
 import Data.Vector qualified as V
 import GHC.Generics
@@ -76,19 +75,13 @@ updateModel (Toggle sound) m =
   let (m', cmd) = toggleCmd m sound
    in m' <# do NoOp <$ send cmd
 updateModel NoOp m = noEff m
-updateModel (Request req) m = m <# do NoOp <$ consoleLog ("Requesting: " <> fromString (show req)) <* send req
+updateModel (Request req) m = m <# do NoOp <$ send req
 updateModel ToggleFadeIn m =
-  (m & #fadeIn %~ not)
-    <@ consoleLog "ToggleFadeIn"
+  noEff $ m & #fadeIn %~ not
 updateModel ToggleFadeOut m =
-  (m & #fadeOut %~ not)
-    <@ consoleLog "ToggleFadeOut"
+  noEff $ m & #fadeOut %~ not
 updateModel ToggleCrossFade m =
-  (m & #crossFade %~ not)
-    <@ consoleLog "ToggleCrossFade"
-
-(<@) :: model -> JSM () -> Effect action model
-m <@ act = Effect m [const act]
+  noEff $ m & #crossFade %~ not
 
 toggleCmd :: Model -> SoundName -> (Model, Request)
 toggleCmd m@Model {..} sn =
