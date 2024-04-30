@@ -44,7 +44,7 @@ import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
 import Data.Map.Ordered.Strict qualified as OMap
 import Data.Map.Strict qualified as Map
-import Data.Maybe (catMaybes, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Ratio ((%))
 import Data.Set qualified as Set
 import Data.Text qualified as T
@@ -169,6 +169,17 @@ processReq GetCues = do
   S.yield $ Left Ok
   S.yield $ Right $ CurrentCues mempty
 
+interpolateStep :: Fading -> Float -> Float -> Int -> Float
+interpolateStep Fading {..} start end i =
+  case fromMaybe Linear interpolation of
+    Quadratic ->
+      let a = end - start
+          b = -2 * a * end
+          c = start
+          x = fromRational $ fromIntegral i % fromIntegral steps
+       in a * x * x + b * x + c
+    Linear -> start + fromIntegral i * (end - start) / fromIntegral steps
+
 fadeIn ::
   ( Reader PlayerEnv :> es
   , Reader PlayerState :> es
@@ -180,7 +191,7 @@ fadeIn ::
   S.Stream (Of (Either Response Event)) (Eff es) ()
 fadeIn dur sn = withSample sn \sample -> do
   let usec = floor $ 1_000_000 * dur.duration / fromIntegral dur.steps
-      level i = fromRational $ fromIntegral i % fromIntegral dur.steps
+      level = interpolateStep dur 0.0 1.0
   playing <- lift $ asks @PlayerState (.playing)
   stopped <-
     lift $
@@ -211,7 +222,7 @@ fadeOut ::
   S.Stream (Of (Either Response Event)) (Eff es) ()
 fadeOut dur sn = withSample sn \_ -> do
   let usec = floor $ 1_000_000 * dur.duration / fromIntegral dur.steps
-      level i = fromRational $ 1 - fromIntegral i % fromIntegral dur.steps
+      level = interpolateStep dur 1.0 0.0
   playing <- lift $ asks @PlayerState (.playing)
   stopped <- lift $ atomically (TMap.lookup sn playing)
   case stopped of
@@ -240,8 +251,8 @@ crossFade ::
 crossFade dur froms tos = do
   smpls <- lift $ asks @PlayerEnv (.samples)
   let usec = floor $ 1_000_000 * dur.duration / fromIntegral dur.steps
-      inLevel i = fromRational $ fromIntegral i % fromIntegral dur.steps
-      outLevel i = 1 - inLevel i
+      inLevel = interpolateStep dur 0.0 1.0
+      outLevel = interpolateStep dur 1.0 0.0
   playing <- lift $ asks @PlayerState (.playing)
   froms' <-
     lift $

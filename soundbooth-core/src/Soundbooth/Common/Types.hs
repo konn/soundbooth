@@ -13,6 +13,7 @@ module Soundbooth.Common.Types (
   Response (..),
   Event (..),
   Status (..),
+  Interpolation (..),
   Playlist (..),
   Fading (..),
 ) where
@@ -40,7 +41,11 @@ data Status = Idle | Playing
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON, NFData, Hashable)
 
-data Fading = Fading {duration :: !Double, steps :: !Int}
+data Fading = Fading {duration :: !Double, steps :: !Int, interpolation :: !(Maybe Interpolation)}
+  deriving (Show, Eq, Ord, Generic)
+  deriving anyclass (FromJSON, ToJSON, NFData)
+
+data Interpolation = Linear | Quadratic
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON, NFData)
 

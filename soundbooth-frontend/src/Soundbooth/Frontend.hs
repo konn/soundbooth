@@ -89,7 +89,16 @@ toggleCmd :: Model -> SoundName -> (Model, Request)
 toggleCmd m@Model {..} sn =
   case OMap.lookup sn playlist of
     Just Playing
-      | fadeOut -> (m {fadeOut = False}, FadeOut Fading {steps = 10, duration = 3.0} sn)
+      | fadeOut ->
+          ( m {fadeOut = False}
+          , FadeOut
+              Fading
+                { steps = 20
+                , duration = 3.0
+                , interpolation = Just Quadratic
+                }
+              sn
+          )
       | otherwise -> (m, Stop sn)
     _
       | crossFade
@@ -97,13 +106,17 @@ toggleCmd m@Model {..} sn =
           NE.nonEmpty $ filter ((== Playing) . snd) $ OMap.assocs playlist ->
           ( m {crossFade = False}
           , CrossFade
-              Fading {steps = 10, duration = 3.0}
+              Fading
+                { steps = 20
+                , duration = 3.0
+                , interpolation = Just Quadratic
+                }
               (fst <$> froms)
               (sn NE.:| [])
           )
       | fadeIn ->
           ( m {fadeIn = False}
-          , FadeIn Fading {steps = 10, duration = 3.0} sn
+          , FadeIn Fading {steps = 20, duration = 3.0, interpolation = Just Quadratic} sn
           )
       | otherwise -> (m, Play sn)
 
