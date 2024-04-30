@@ -156,9 +156,6 @@ defaultMainWith Options {..} = do
                   runWarpServerSettings @TheAPI
                     (Warp.defaultSettings & Warp.setPort backendOpts.port)
                     (genericServerT @APIRoutes $ theServer backendOpts)
-                    `race_` forever do
-                      threadDelay 60_000_000
-                      atomically $ sendEvent qs KeepAliveEvt
 
 theServer ::
   ( Reader PlayerQueues ∈ es
@@ -185,7 +182,13 @@ handleWs ::
 handleWs conn = do
   qs <- subscribe =<< ask @PlayerQueues
   atomically $ sendRequest qs GetPlaylist
-  runReader qs $ sendResp `race_` sendEvt `race_` recvr
+  runReader qs $
+    sendResp
+      `race_` sendEvt
+      `race_` recvr
+      `race_` forever do
+        threadDelay $ 30_000_000
+        WS.sendPing conn KeepAlive
   where
     sendEvt = do
       qs <- ask @ClientQueues

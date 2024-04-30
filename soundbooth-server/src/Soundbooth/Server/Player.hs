@@ -294,7 +294,6 @@ processReq (CrossFade dur froms tos) = do
         , Started . fmap fst <$> NE.nonEmpty tos'
         ]
     )
-processReq KeepAlive = pure mempty
 
 withSample ::
   (Reader PlayerEnv :> es) =>
