@@ -128,10 +128,9 @@ mdiDark name =
   span_
     [class_ "icon"]
     [ span_
-        [ class_ "iconify mdi mdi-dark"
-        , data_ "icon" $ "mdi-" <> name
+        [ class_ "material-symbols-outlined"
         ]
-        []
+        [text name]
     ]
 
 viewModel :: Model -> View Action
@@ -159,7 +158,7 @@ viewModel Model {..} =
                             : "is-link"
                             : if fadeIn then ["is-active"] else ["is-outlined"]
                     ]
-                    [mdiDark "arrow-top-right"]
+                    [mdiDark "north_east"]
                 , button_
                     [ onClick ToggleFadeOut
                     , class_ $
@@ -168,7 +167,7 @@ viewModel Model {..} =
                             : "is-link"
                             : ["is-outlined" | not fadeOut]
                     ]
-                    [mdiDark "arrow-bottom-right"]
+                    [mdiDark "south_east"]
                 , button_
                     [ onClick ToggleCrossFade
                     , class_ $
