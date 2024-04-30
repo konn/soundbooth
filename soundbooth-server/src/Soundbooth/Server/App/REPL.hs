@@ -96,7 +96,7 @@ optionsP = Opts.info (parser <**> Opts.helper) (Opts.fullDesc <> Opts.progDesc "
 
 defaultMainWith :: Options -> IO ()
 defaultMainWith Options {..} = do
-  cs <- Y.decodeFileThrow @_ @Cues cueFile
+  cs <- Y.decodeFileThrow @_ @Config cueFile
   runEff $ runConsole $ runConcurrent $ do
     qs <- newPlayerQueues 64
     conn <- subscribe qs

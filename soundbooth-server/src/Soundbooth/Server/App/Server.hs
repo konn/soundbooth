@@ -143,7 +143,7 @@ defaultMain = defaultMainWith =<< Opts.execParser optionsP
 
 defaultMainWith :: Options -> IO ()
 defaultMainWith Options {..} = do
-  cs <- Y.decodeFileThrow @_ @Cues cueFile
+  cs <- Y.decodeFileThrow @_ @Config cueFile
   runEff $
     runStdErrLogger "backend" LogTrace $
       runConsole $
@@ -181,7 +181,7 @@ handleWs ::
   Eff es ()
 handleWs conn = do
   qs <- subscribe =<< ask @PlayerQueues
-  atomically $ sendRequest qs GetPlaylist
+  atomically $ mapM_ (sendRequest qs) [GetPlaylist, GetCues]
   runReader qs $
     sendResp
       `race_` sendEvt

@@ -7,10 +7,12 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-partial-fields #-}
 
 module Soundbooth.Server.Player (
-  Cues (..),
+  Config (..),
   Music (..),
   runPlayer,
   SoundName (..),
@@ -31,11 +33,13 @@ module Soundbooth.Server.Player (
 import Control.Foldl qualified as L
 import Control.Lens (ifolded, withIndex)
 import Control.Monad (forM_, unless, when)
+import Control.Monad.Trans (lift)
 import Data.Aeson qualified as J
-import Data.Bifoldable (bimapM_)
 import Data.Foldable (foldl')
 import Data.Function ((&))
 import Data.Functor (void)
+import Data.Functor.Of (Of)
+import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
@@ -54,22 +58,81 @@ import Effectful.Concurrent (threadDelay)
 import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM
 import Effectful.Dispatch.Static (unsafeEff_)
-import Effectful.Error.Static (Error, runErrorNoCallStackWith, throwError)
 import Effectful.Reader.Static (Reader, asks, runReader)
 import Focus qualified
 import GHC.Generics
 import Numeric.Natural
 import Soundbooth.Common.Types
 import StmContainers.Map qualified as TMap
+import Streaming qualified as S
 import Streaming.Prelude qualified as S
 
-newtype Cues = Cues {files :: V.Vector Music}
+data Config = Config {files :: V.Vector Music, cues :: V.Vector RawCue}
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (J.FromJSON, J.ToJSON)
 
 data Music = Music {name :: !SoundName, path :: !Text}
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (J.FromJSON, J.ToJSON)
+
+type RawCue = Cue' SoundName
+
+type Cue = Cue' NamedSample
+
+data CueState
+  = NoCue
+  | Paused !Int
+  | Cued !Int
+  deriving (Show, Eq, Ord, Generic)
+
+data CueManager = CueManager
+  { currentCue :: !(TVar CueState)
+  }
+
+data Cue' a = Cue
+  { name :: Text
+  , commands :: NonEmpty (CueCommand' a)
+  , continue :: Bool
+  }
+  deriving (Show, Eq, Ord, Generic, Generic1, Functor, Foldable, Traversable)
+
+deriving anyclass instance J.ToJSON RawCue
+
+instance J.FromJSON RawCue where
+  parseJSON = J.withObject "{cue}" \o -> do
+    name <- o J..: "name"
+    commands <- o J..: "commands"
+    continue <- o J..:? "continue" J..!= False
+    pure Cue {..}
+
+type RawCueCommand = CueCommand' SoundName
+
+data NamedSample = NamedSample {name :: !SoundName, sample :: !Sample}
+  deriving (Generic)
+
+type CueCommand = CueCommand' NamedSample
+
+data CueCommand' a
+  = PlayCue
+      { play :: NonEmpty a
+      , fadeIn :: Maybe Fading
+      , fadeOut :: Maybe Fading
+      }
+  | CrossFadeTo
+      { crossFadeTo :: NonEmpty a
+      , duration :: !Double
+      , steps :: !Int
+      }
+  deriving (Show, Eq, Ord, Generic, Generic1, Functor, Foldable, Traversable)
+
+cmdOpts :: J.Options
+cmdOpts = J.defaultOptions {J.sumEncoding = J.UntaggedValue}
+
+instance J.FromJSON RawCueCommand where
+  parseJSON = J.genericParseJSON cmdOpts
+
+instance J.ToJSON RawCueCommand where
+  toJSON = J.genericToJSON cmdOpts
 
 data PlayerQueues = PlayerQueues
   { evtQ :: TChan Event
@@ -83,7 +146,7 @@ data ClientQueues = ClientQueues
   , reqQ :: TBQueue Request
   }
 
-runPlayer :: (IOE :> es, Concurrent :> es) => PlayerOptions -> PlayerQueues -> Cues -> Eff es ()
+runPlayer :: (IOE :> es, Concurrent :> es) => PlayerOptions -> PlayerQueues -> Config -> Eff es ()
 runPlayer opts queues cs = do
   playing <- unsafeEff_ TMap.newIO
   runAudio opts.audioOptions $ do
@@ -167,12 +230,12 @@ mainLoop ::
 mainLoop = do
   PlayerQueues {..} <- asks @PlayerState (.queues)
   S.repeatM (atomically $ readTBQueue reqQ)
-    & S.mapM processReq
+    & flip S.for processReq
     & S.mapM_
       ( atomically
-          . bimapM_
-            (mapM_ $ writeTChan respQ)
-            (mapM_ $ writeTChan evtQ)
+          . either
+            (writeTChan respQ)
+            (writeTChan evtQ)
       )
 
 newPlayerQueues :: (Concurrent :> es) => Natural -> Eff es PlayerQueues
@@ -189,118 +252,136 @@ processReq ::
   , Reader PlayerEnv :> es
   ) =>
   Request ->
-  Eff es ([Response], [Event])
+  S.Stream (Of (Either Response Event)) (Eff es) ()
 processReq GetPlaylist = do
-  sst <- asks @PlayerState (.playing)
-  smpls <- asks @PlayerEnv (.samples)
-  pls <- atomically $ do
+  sst <- lift $ asks @PlayerState (.playing)
+  smpls <- lift $ asks @PlayerEnv (.samples)
+  pls <- lift $ atomically $ do
     U.foldM (L.generalize $ L.premap fst L.set) $ TMap.unfoldlM sst
   let pl =
         Playlist $
           V.fromList $
             OMap.assocs $
               foldl' (flip $ OMap.alter (const $ Just Playing)) (Idle <$ smpls) pls
-  pure ([Ok], [CurrentPlaylist pl])
+  S.yield $ Left Ok
+  S.yield $ Right $ CurrentPlaylist pl
 processReq (Play sn) = withSample sn \sample -> do
-  playing <- asks @PlayerState (.playing)
-  mapM_ soundStop
-    =<< atomically (TMap.focus Focus.lookupAndDelete sn playing)
-  s <- play sample 1.0 1.0 0.0 1.0
-  atomically $ TMap.insert s sn playing
-  pure ([Ok], [Started $ sn NE.:| []])
+  playing <- lift $ asks @PlayerState (.playing)
+  lift $
+    mapM_ soundStop
+      =<< atomically (TMap.focus Focus.lookupAndDelete sn playing)
+  s <- lift $ play sample 1.0 1.0 0.0 1.0
+  S.yield $ Right $ Started $ NE.singleton sn
+  lift $ atomically $ TMap.insert s sn playing
+  S.yield $ Left Ok
 processReq (Stop sn) = do
-  playing <- asks @PlayerState (.playing)
-  stopped <-
-    fmap or . mapM stop =<< atomically (TMap.lookup sn playing)
-  when stopped $
-    atomically $
-      TMap.delete sn playing
-  pure ([Ok], [Stopped $ NE.singleton sn | stopped])
-processReq StopAll = mempty <$ stopAll
+  stopped <- lift do
+    playing <- asks @PlayerState (.playing)
+    stopped <-
+      fmap or . mapM stop =<< atomically (TMap.lookup sn playing)
+    when stopped $
+      atomically $
+        TMap.delete sn playing
+    pure stopped
+  when stopped $ S.yield $ Right $ Stopped $ NE.singleton sn
+  S.yield $ Left Ok
+processReq StopAll = lift stopAll *> S.yield (Left Ok)
 processReq (FadeIn dur sn) = withSample sn \sample -> do
   let usec = floor $ 1_000_000 * dur.duration / fromIntegral dur.steps
       level i = fromRational $ fromIntegral i % fromIntegral dur.steps
-  playing <- asks @PlayerState (.playing)
+  playing <- lift $ asks @PlayerState (.playing)
   stopped <-
-    fmap or . mapM stop =<< atomically (TMap.lookup sn playing)
+    lift $
+      fmap or . mapM stop =<< atomically (TMap.lookup sn playing)
   when stopped $
-    atomically $
-      TMap.delete sn playing
-  mapM_ soundStop
-    =<< atomically (TMap.focus Focus.lookupAndDelete sn playing)
-  s <- play sample 0.0 0.0 0.0 1.0
-  atomically $ TMap.insert s sn playing
-  forM_ [1 .. dur.steps] \i -> do
+    lift $
+      atomically $
+        TMap.delete sn playing
+  lift $
+    mapM_ soundStop
+      =<< atomically (TMap.focus Focus.lookupAndDelete sn playing)
+  s <- lift $ play sample 0.0 0.0 0.0 1.0
+  S.yield $ Right $ Started $ NE.singleton sn
+  lift $ atomically $ TMap.insert s sn playing
+  forM_ [1 .. dur.steps] \i -> lift do
     threadDelay usec
     update s False (level i) (level i) 0.0 1.0
-  pure ([Ok], [Started $ sn NE.:| []])
+  S.yield $ Left Ok
 processReq (FadeOut dur sn) = withSample sn \_ -> do
   let usec = floor $ 1_000_000 * dur.duration / fromIntegral dur.steps
       level i = fromRational $ 1 - fromIntegral i % fromIntegral dur.steps
-  playing <- asks @PlayerState (.playing)
-  stopped <- atomically (TMap.lookup sn playing)
+  playing <- lift $ asks @PlayerState (.playing)
+  stopped <- lift $ atomically (TMap.lookup sn playing)
   case stopped of
     Nothing -> pure mempty
     Just s -> do
       forM_ [0 .. dur.steps] \i -> do
-        b <- update s False (level i) (level i) 0.0 1.0
+        b <- lift $ update s False (level i) (level i) 0.0 1.0
         unless b $ do
-          atomically (TMap.focus Focus.delete sn playing)
-          throwError ([Ok], [Stopped $ sn NE.:| []])
-        unless (i == dur.steps) $ threadDelay usec
-      atomically (TMap.focus Focus.delete sn playing)
-      void $ stop s
-      pure ([Ok], [Stopped $ sn NE.:| []])
+          lift $ atomically (TMap.focus Focus.delete sn playing)
+          S.yield $ Right $ Stopped $ NE.singleton sn
+        unless (i == dur.steps) $ lift $ threadDelay usec
+      lift $ atomically (TMap.focus Focus.delete sn playing)
+      lift $ void $ stop s
+      S.yield $ Left Ok
 processReq (CrossFade dur froms tos) = do
-  smpls <- asks @PlayerEnv (.samples)
+  smpls <- lift $ asks @PlayerEnv (.samples)
   let usec = floor $ 1_000_000 * dur.duration / fromIntegral dur.steps
       inLevel i = fromRational $ fromIntegral i % fromIntegral dur.steps
       outLevel i = 1 - inLevel i
-  playing <- asks @PlayerState (.playing)
+  playing <- lift $ asks @PlayerState (.playing)
   froms' <-
-    atomically $
-      catMaybes
-        <$> mapM
-          (liftA2 (liftA2 (,)) <$> (pure . pure) <*> flip TMap.lookup playing)
-          (NE.toList froms)
+    lift $
+      atomically $
+        catMaybes
+          <$> mapM
+            (liftA2 (liftA2 (,)) <$> (pure . pure) <*> flip TMap.lookup playing)
+            (NE.toList froms)
   tos' <-
-    mapM (mapM (\s -> play s 0.0 0.0 0.0 1.0)) $
+    mapM (mapM (\s -> lift $ play s 0.0 0.0 0.0 1.0)) $
       mapMaybe (liftA2 (,) <$> pure <*> (`OMap.lookup` smpls)) (NE.toList tos)
-
+  S.each $ Right . Started . fmap fst <$> NE.nonEmpty tos'
   forM_ [0 .. dur.steps] \i -> do
-    threadDelay usec
-    forConcurrently_
+    lift $ threadDelay usec
+    forM_
       froms'
       ( \(sn, s) -> do
-          b <- update s False (outLevel i) (outLevel i) 0.0 1.0
-          unless b $
-            atomically $
-              TMap.focus Focus.delete sn playing
+          b <- lift $ update s False (outLevel i) (outLevel i) 0.0 1.0
+          unless b do
+            lift $ atomically $ TMap.focus Focus.delete sn playing
+            S.yield $ Right $ Stopped $ NE.singleton sn
       )
-      `concurrently_` forConcurrently_ tos' \(sn, s) -> do
-        b <- update s False (inLevel i) (inLevel i) 0.0 1.0
-        unless b $
+    forM_ tos' \(sn, s) -> do
+      b <-
+        lift $
+          update s False (inLevel i) (inLevel i) 0.0 1.0
+      unless b $
+        lift $
           atomically $
             TMap.insert s sn playing
-  mapM_ (stop . snd) froms'
-  forM_ tos' \(sn, s) -> do
-    atomically $ TMap.insert s sn playing
-  forM_ froms' \(sn, _) -> do
-    atomically $ TMap.delete sn playing
-  pure
-    ( [Ok]
-    , catMaybes
-        [ Stopped . fmap fst <$> NE.nonEmpty froms'
-        , Started . fmap fst <$> NE.nonEmpty tos'
-        ]
-    )
+  mapM_ (lift . stop . snd) froms'
+  S.each $ Right . Stopped . fmap fst <$> NE.nonEmpty froms'
+  lift $ do
+    forM_ tos' \(sn, s) -> do
+      atomically $ TMap.insert s sn playing
+    forM_ froms' \(sn, _) -> do
+      atomically $ TMap.delete sn playing
+  S.yield $ Left Ok
+processReq GetCues = do
+  S.yield $ Left Ok
+  S.yield $ Right $ CurrentCues mempty
 
 withSample ::
   (Reader PlayerEnv :> es) =>
   SoundName ->
-  (Sample -> Eff (Error ([Response], [Event]) ': es) ([Response], [Event])) ->
-  Eff es ([Response], [Event])
+  ( Sample ->
+    S.Stream
+      (Of (Either Response Event))
+      (Eff es)
+      ()
+  ) ->
+  S.Stream (Of (Either Response Event)) (Eff es) ()
 withSample sn k = do
-  smpls <- asks @PlayerEnv (.samples)
-  runErrorNoCallStackWith pure do
-    maybe (pure ([UnknownSound sn], [])) k $ OMap.lookup sn smpls
+  smpls <- lift $ asks @PlayerEnv (.samples)
+  maybe (S.yield $ Left $ UnknownSound sn) k $
+    OMap.lookup sn smpls

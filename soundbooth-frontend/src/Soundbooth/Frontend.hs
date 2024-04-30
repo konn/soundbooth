@@ -37,6 +37,7 @@ defaultMain = do
         , fadeIn = False
         , fadeOut = False
         , crossFade = False
+        , activeTab = Tracks
         }
     update = updateModel
 
@@ -71,6 +72,7 @@ updateModel :: Action -> Model -> Effect Action Model
 updateModel (Websock (WebSocketMessage (Event evt))) m = handleEvent evt m
 updateModel (Websock (WebSocketMessage (Response rsp))) m = handleResponse rsp m
 updateModel (Websock _) m = noEff m
+updateModel (SwitchTab tab) m = noEff $ m & #activeTab .~ tab
 updateModel (Toggle sound) m =
   let (m', cmd) = toggleCmd m sound
    in m' <# do NoOp <$ send cmd
@@ -115,6 +117,7 @@ handleEvent (Stopped sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Idle)) sns)
 handleEvent (CurrentPlaylist pl) =
   noEff . (#playlist .~ OMap.fromList (V.toList pl.sounds))
+handleEvent (CurrentCues _) = noEff
 handleEvent KeepAlive = noEff
 
 mdiDark :: MisoString -> View a
@@ -128,72 +131,99 @@ mdiDark name =
     ]
 
 viewModel :: Model -> View Action
-viewModel Model {..} =
+viewModel m@Model {..} =
   section_
     [data_ "theme" "dark", class_ "section"]
-    [ div_
-        [class_ "container"]
-        [ h1_ [class_ "title"] [text "Soundbooth"]
-        , section_
-            [class_ "soundbooth"]
-            [ section_
-                [class_ "buttons"]
-                [ button_
-                    [onClick $ Request GetPlaylist, class_ "button is-success is-outlined"]
-                    [mdiDark "sync"]
-                , button_
-                    [onClick $ Request StopAll, class_ "button is-danger is-outlined"]
-                    [mdiDark "stop"]
-                , button_
-                    [ onClick ToggleFadeIn
-                    , class_ $
-                        unwords $
-                          "button"
-                            : "is-link"
-                            : if fadeIn then ["is-active"] else ["is-outlined"]
-                    ]
-                    [mdiDark "north_east"]
-                , button_
-                    [ onClick ToggleFadeOut
-                    , class_ $
-                        unwords $
-                          "button"
-                            : "is-link"
-                            : ["is-outlined" | not fadeOut]
-                    ]
-                    [mdiDark "south_east"]
-                , button_
-                    [ onClick ToggleCrossFade
-                    , class_ $
-                        unwords $
-                          "button"
-                            : "is-link"
-                            : ["is-outlined" | not crossFade]
-                    ]
-                    [mdiDark "shuffle"]
+    [ h1_ [class_ "title"] [text "Soundbooth"]
+    , section_
+        [class_ "soundbooth"]
+        [ section_
+            [class_ "buttons"]
+            [ button_
+                [onClick $ Request GetPlaylist, class_ "button is-success is-outlined"]
+                [mdiDark "sync"]
+            , button_
+                [onClick $ Request StopAll, class_ "button is-danger is-outlined"]
+                [mdiDark "stop"]
+            , button_
+                [ onClick ToggleFadeIn
+                , class_ $
+                    unwords $
+                      "button"
+                        : "is-link"
+                        : if fadeIn then ["is-active"] else ["is-outlined"]
                 ]
-            , section_
-                [class_ "main buttons columns"]
-                [ a_
-                  [ onClick (Toggle sn)
-                  , class_ $ T.unwords $ "column" : "button" : maybeToList (statusClass s)
+                [mdiDark "north_east"]
+            , button_
+                [ onClick ToggleFadeOut
+                , class_ $
+                    unwords $
+                      "button"
+                        : "is-link"
+                        : ["is-outlined" | not fadeOut]
+                ]
+                [mdiDark "south_east"]
+            , button_
+                [ onClick ToggleCrossFade
+                , class_ $
+                    unwords $
+                      "button"
+                        : "is-link"
+                        : ["is-outlined" | not crossFade]
+                ]
+                [mdiDark "shuffle"]
+            ]
+        , div_
+            [class_ "tabs"]
+            [ ul_
+                []
+                [ li_
+                  [class_ "is-active" | tab == activeTab]
+                  [ a_
+                      [onClick $ SwitchTab tab]
+                      [ toIcon tab
+                      , text (T.pack $ show tab)
+                      ]
                   ]
-                  [text $ coerce sn]
-                | (sn, s) <- OMap.assocs playlist
+                | tab <- [Tracks] -- [minBound .. maxBound]
                 ]
             ]
+        , div_
+            [class_ "container"]
+            $ renderTab activeTab m
         ]
     ]
+
+renderTab :: Tab -> Model -> [View Action]
+renderTab _ model =
+  [ section_
+      [class_ "main buttons columns"]
+      [ a_
+        [ onClick (Toggle sn)
+        , class_ $ T.unwords $ "column" : "button" : maybeToList (statusClass s)
+        ]
+        [text $ coerce sn]
+      | (sn, s) <- OMap.assocs model.playlist
+      ]
+  ]
+
+toIcon :: Tab -> View Action
+toIcon Tracks = mdiDark "queue_music"
+toIcon Cues = mdiDark "movie"
 
 statusClass :: Status -> Maybe T.Text
 statusClass Idle = Nothing
 statusClass Playing = Just "is-primary"
+
+data Tab = Tracks | Cues
+  deriving (Show, Eq, Ord, Enum, Bounded, Generic)
 
 data Model = Model
   { playlist :: OMap SoundName Status
   , fadeIn :: !Bool
   , fadeOut :: !Bool
   , crossFade :: !Bool
+  , activeTab :: !Tab
   }
   deriving (Show, Eq, Ord, Generic)
 
@@ -207,6 +237,7 @@ data Action
   = Websock (WebSocket EventOrResponse)
   | Toggle SoundName
   | Request Request
+  | SwitchTab Tab
   | ToggleFadeIn
   | ToggleFadeOut
   | ToggleCrossFade

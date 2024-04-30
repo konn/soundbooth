@@ -52,6 +52,7 @@ data Request
   | CrossFade !Fading !(NonEmpty SoundName) !(NonEmpty SoundName)
   | StopAll
   | GetPlaylist
+  | GetCues
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
@@ -59,10 +60,13 @@ data Response = Ok | UnknownSound !SoundName | Error !Text
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+type Cuelist = V.Vector (SoundName, Status)
+
 data Event
   = Started !(NonEmpty SoundName)
   | Stopped !(NonEmpty SoundName)
   | CurrentPlaylist !Playlist
+  | CurrentCues !Cuelist
   | KeepAlive
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
