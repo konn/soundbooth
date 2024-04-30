@@ -11,7 +11,7 @@
 
 module Soundbooth.Server.Player (
   Cues (..),
-  Cue (..),
+  Music (..),
   runPlayer,
   SoundName (..),
   Request (..),
@@ -63,11 +63,11 @@ import Soundbooth.Common.Types
 import StmContainers.Map qualified as TMap
 import Streaming.Prelude qualified as S
 
-newtype Cues = Cues {cues :: V.Vector Cue}
+newtype Cues = Cues {files :: V.Vector Music}
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (J.FromJSON, J.ToJSON)
 
-data Cue = Cue {name :: !SoundName, path :: !Text}
+data Music = Music {name :: !SoundName, path :: !Text}
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (J.FromJSON, J.ToJSON)
 
@@ -87,7 +87,7 @@ runPlayer :: (IOE :> es, Concurrent :> es) => PlayerOptions -> PlayerQueues -> C
 runPlayer opts queues cs = do
   playing <- unsafeEff_ TMap.newIO
   runAudio opts.audioOptions $ do
-    samples <- OMap.fromList <$> mapM (\Cue {..} -> (name,) <$> sampleFromFile (T.unpack path) 1.0) (V.toList cs.cues)
+    samples <- OMap.fromList <$> mapM (\Music {..} -> (name,) <$> sampleFromFile (T.unpack path) 1.0) (V.toList cs.files)
     runReader opts $ runReader ServerEnv {..} do
       runReader ServerState {..} (mainLoop `race_` checkIfStopped)
 
