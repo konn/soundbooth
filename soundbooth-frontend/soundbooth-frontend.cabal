@@ -59,8 +59,6 @@ library
     containers,
     generic-lens,
     ghc-wasm-compat,
-    jsaddle,
-    jsaddle-dom,
     lens,
     miso,
     ordered-containers,
