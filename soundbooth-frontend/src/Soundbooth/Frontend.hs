@@ -128,6 +128,8 @@ handleEvent (Started sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Playing)) sns)
 handleEvent (Stopped sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Idle)) sns)
+handleEvent (Interrupted sns) =
+  noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Idle)) sns)
 handleEvent (CurrentPlaylist pl) =
   noEff . (#playlist .~ OMap.fromList (V.toList pl.sounds))
 handleEvent (CurrentCues _) = noEff

@@ -32,7 +32,7 @@ module Soundbooth.Server.Player (
 
 import Control.Foldl qualified as L
 import Control.Lens (ifolded, withIndex)
-import Control.Monad (forM_, unless, when)
+import Control.Monad (forM_, forever, unless, when)
 import Control.Monad.Trans (lift)
 import Data.Foldable (foldl')
 import Data.Function ((&))
@@ -43,7 +43,6 @@ import Data.List.NonEmpty qualified as NE
 import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
 import Data.Map.Ordered.Strict qualified as OMap
-import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Ratio ((%))
 import Data.Set qualified as Set
@@ -91,35 +90,24 @@ data PlayerState = ServerState
 checkIfStopped ::
   (Reader PlayerState :> es, Concurrent :> es, Reader PlayerOptions :> es, Audio :> es) =>
   Eff es ()
-checkIfStopped = go mempty
-  where
-    go playing = do
-      threadDelay . floor . (1_000_000 *)
-        =<< asks @PlayerOptions (.stopDetectIntervalInSec)
-      sst <- asks @PlayerState (.playing)
-      (nowPlaying, inactives) <-
-        L.foldOverM
-          (ifolded . withIndex)
-          ( L.premapM
-              (traverse $ liftA2 (,) <$> pure <*> isActive)
-              ( L.generalize $
-                  (,)
-                    <$> L.prefilter
-                      (snd . snd)
-                      (L.premap (fmap fst) L.map)
-                    <*> L.prefilter
-                      (not . snd . snd)
-                      (L.premap fst L.set)
-              )
-          )
-          =<< atomically do
-            U.foldM (L.generalize L.map) $ TMap.unfoldlM sst
-      atomically $ forM_ inactives $ (`TMap.delete` sst)
-      let !stopped = inactives `Set.union` (Map.keysSet playing Set.\\ Map.keysSet nowPlaying)
-      forM_ (NE.nonEmpty $ Set.toList stopped) $ \stops -> do
-        evts <- asks @PlayerState (.queues.evtQ)
-        atomically $ writeTChan evts $ Stopped stops
-      go nowPlaying
+checkIfStopped = forever do
+  threadDelay . floor . (1_000_000 *)
+    =<< asks @PlayerOptions (.stopDetectIntervalInSec)
+  sst <- asks @PlayerState (.playing)
+  inactives <-
+    L.foldOverM
+      (ifolded . withIndex)
+      ( L.prefilterM
+          (fmap not . isActive . snd)
+          $ L.generalize
+          $ L.premap fst L.set
+      )
+      =<< atomically do
+        U.foldM (L.generalize L.map) $ TMap.unfoldlM sst
+  atomically $ forM_ inactives $ (`TMap.delete` sst)
+  forM_ (NE.nonEmpty $ Set.toList inactives) $ \stops -> do
+    evts <- asks @PlayerState (.queues.evtQ)
+    atomically $ writeTChan evts $ Stopped stops
 
 mainLoop ::
   ( Concurrent :> es
@@ -284,7 +272,7 @@ crossFade dur froms tos = do
           atomically $
             TMap.insert s sn playing
   mapM_ (lift . stop . snd) froms'
-  S.each $ Right . Stopped . fmap fst <$> NE.nonEmpty froms'
+  S.each $ Right . Interrupted . fmap fst <$> NE.nonEmpty froms'
   lift $ do
     forM_ tos' \(sn, s) -> do
       atomically $ TMap.insert s sn playing
@@ -326,7 +314,7 @@ cutOut sn = do
       atomically $
         TMap.delete sn playing
     pure stopped
-  when stopped $ S.yield $ Right $ Stopped $ NE.singleton sn
+  when stopped $ S.yield $ Right $ Interrupted $ NE.singleton sn
   S.yield $ Left Ok
 
 withSample ::

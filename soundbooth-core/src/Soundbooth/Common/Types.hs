@@ -9,6 +9,7 @@
 
 module Soundbooth.Common.Types (
   SoundName (..),
+  CueRequest (..),
   Request (..),
   Response (..),
   Event (..),
@@ -18,6 +19,7 @@ module Soundbooth.Common.Types (
   Fading (..),
 ) where
 
+import Control.Applicative ((<|>))
 import Control.DeepSeq (NFData)
 import Data.Aeson
 import Data.Hashable (Hashable)
@@ -67,8 +69,29 @@ data Response = Ok | UnknownSound !SoundName | Error !Text
 
 type Cuelist = V.Vector (SoundName, Status)
 
+data CueRequest
+  = CuePlay !Int
+  | CueStop !Int
+  | CueGoto !Int
+  | PlayerRequest !Request
+  deriving (Show, Eq, Ord, Generic)
+
+instance FromJSON CueRequest where
+  parseJSON = withObject "CueRequest" $ \o -> do
+    CuePlay <$> o .: "CuePlay"
+      <|> CueStop <$> o .: "CueStop"
+      <|> CueGoto <$> o .: "CueGoto"
+      <|> PlayerRequest <$> parseJSON (Object o)
+
+instance ToJSON CueRequest where
+  toJSON (CuePlay i) = object ["CuePlay" .= i]
+  toJSON (CueStop i) = object ["CueStop" .= i]
+  toJSON (CueGoto i) = object ["CueGoto" .= i]
+  toJSON (PlayerRequest req) = toJSON req
+
 data Event
   = Started !(NonEmpty SoundName)
+  | Interrupted !(NonEmpty SoundName)
   | Stopped !(NonEmpty SoundName)
   | CurrentPlaylist !Playlist
   | CurrentCues !Cuelist
