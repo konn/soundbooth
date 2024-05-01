@@ -32,7 +32,13 @@ BUILD:
   RUN --mount ${MOUNT_DIST_NEWSTYLE} wizer --allow-wasi --wasm-bulk-memory true --init-func _initialize -o dist/${wasm} "${HS_WASM_PATH}"
   RUN wasm-opt -Oz dist/${wasm} -o dist/${wasm}
   RUN wasm-tools strip -o dist/${wasm} dist/${wasm}
-  RUN cp data/index.js data/index.html dist/
+  LET SHASUM=$(sha1sum dist/${wasm} | cut -c1-7)
+  LET FINAL_WASM=${wasm%.wasm}-${SHASUM}.wasm
+  RUN mv dist/${wasm} dist/${FINAL_WASM}
+  RUN cp data/index.html dist/
+  RUN cp data/index.js dist/index-${SHASUM}.js
+  RUN sed -i "s/index.js/index-${SHASUM}.js/g" dist/index.html
+  RUN sed -i "s/${wasm}/${FINAL_WASM}/g" dist/index-${SHASUM}.js
   RUN cp *.js dist/
 
   SAVE ARTIFACT ./dist AS LOCAL _build
