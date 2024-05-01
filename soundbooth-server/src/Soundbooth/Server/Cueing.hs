@@ -29,6 +29,7 @@ import Control.Concurrent.STM.TBMQueue (TBMQueue, closeTBMQueue, newTBMQueue, re
 import Control.Exception.Safe (bracket)
 import Control.Foldl qualified as L
 import Control.Lens (traverse1, (^.))
+import Control.Lens.Extras (is)
 import Control.Monad (forM_, guard, when)
 import Control.Monad.Trans
 import Control.Zipper hiding ((:>))
@@ -123,7 +124,10 @@ runCueingServer playerOpts pqs qs cfg = do
           `race_` runPlayer playerOpts pqs cfg
 
 buildCuelist :: V.Vector RawCue -> Cuelist
-buildCuelist = V.map \Cue {..} ->
+buildCuelist = V.map toCueInfo
+
+toCueInfo :: Cue' SoundName -> CueInfo
+toCueInfo Cue {..} =
   let steps =
         V.map
           \case
@@ -158,18 +162,57 @@ process ::
   ) =>
   CueRequest ->
   S.Stream (S.Of (Either CueEvent Request)) (Eff es) ()
-process (PlayerRequest req) = S.yield $ Right req
+process (PlayerRequest req) = do
+  when (is #_StopAll req) $ stopCue False
+  S.yield $ Right req
 process CuePlay = startCue
 process CueStop = stopCue True
-process CueGoNext = stopCue True
+process CueGoNext = do
+  switchCuePossiblyCrossFade $ fmap (tug rightward)
 process CueGoPrev = do
-  stopCue False
-  lift $ #cueTape %= fmap (tug leftward)
+  switchCuePossiblyCrossFade $ fmap (tug leftward)
 process (CueGoto i) = do
-  stopCue False
-  lift $ #cueTape %= fmap (tug (moveTo i))
-process GetCuelist = do
+  switchCuePossiblyCrossFade $ fmap (tug (moveTo i))
+process GetCueState = do
   S.yield . Left . CueCurrentCues =<< lift (EffL.view #cuelist)
+  S.yield . Left . CueStatus =<< lift getCueStatus
+
+switchCuePossiblyCrossFade ::
+  ( State CueState :> es
+  , Reader CueEnv :> es
+  , Concurrent :> es
+  , Random :> es
+  ) =>
+  (Maybe CueTape -> Maybe CueTape) ->
+  S.Stream (S.Of (Either CueEvent Request)) (Eff es) ()
+switchCuePossiblyCrossFade f = do
+  stt <- lift $ use #status
+  case stt of
+    Idle -> lift $ #cueTape %= f
+    Playing -> do
+      lift $ #cueTape %= f
+      startCue
+
+getCueStatus ::
+  (State CueState :> es) =>
+  Eff es CueingStatus
+getCueStatus = do
+  mcue <- use #cueTape
+  case mcue of
+    Nothing -> pure Inactive
+    Just cue -> do
+      mtrack <- use #trackTape
+      let pos = tooth cue
+          cueInfo = toCueInfo $ cue ^. focus
+      case mtrack of
+        Nothing -> pure $ Active pos cueInfo IdleCue
+        Just track -> do
+          status <- use #status
+          pure $
+            Active pos cueInfo $
+              case status of
+                Idle -> IdleCue
+                Playing -> CuePlayingStep $ tooth track
 
 data CueEnv = CueEnv
   { nowPlaying :: TSet.Set SoundName
@@ -178,9 +221,13 @@ data CueEnv = CueEnv
   }
   deriving (Generic)
 
+type CueTape = Top :>> V.Vector RawCue :>> RawCue
+
+type TrackTape = Top :>> V.Vector RawCue :>> RawCue :>> NonEmpty RawCueCommand :>> RawCueCommand
+
 data CueState = CueState
-  { cueTape :: Maybe (Top :>> V.Vector RawCue :>> RawCue)
-  , trackTape :: Maybe (Top :>> V.Vector RawCue :>> RawCue :>> NonEmpty RawCueCommand :>> RawCueCommand)
+  { cueTape :: Maybe (CueTape)
+  , trackTape :: Maybe TrackTape
   , fadeOut :: Maybe Fading
   , status :: Status
   }

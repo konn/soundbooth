@@ -183,7 +183,7 @@ handleWs ::
   Eff es ()
 handleWs conn = do
   qs <- subscribeCue =<< ask @CueingQueues
-  atomically $ mapM_ (sendCueRequest qs) [PlayerRequest GetPlaylist, GetCuelist]
+  atomically $ mapM_ (sendCueRequest qs) [PlayerRequest GetPlaylist, GetCueState]
   runReader qs $
     sendResp
       `race_` sendEvt
