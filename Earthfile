@@ -13,10 +13,13 @@ BUILD:
   ARG wasm=${outdir}.wasm
   ENV MOUNT_GLOBAL_STORE="type=cache,mode=0777,id=${target}#ghc-${GHC_VER}#global-store,sharing=shared,target=/root/.ghc-wasm/.cabal/store"
   ENV MOUNT_DIST_NEWSTYLE="type=cache,mode=0777,id=${target}#ghc${GHC_VER}#dist-newstyle,sharing=shared,target=dist-newstyle"
-  COPY --keep-ts . .
+  COPY --keep-ts cabal-common.project cabal-wasm.project .
+  COPY --keep-ts soundbooth-core/soundbooth-core.cabal soundbooth-core/soundbooth-core.cabal
+  COPY --keep-ts soundbooth-frontend/soundbooth-frontend.cabal soundbooth-frontend/soundbooth-frontend.cabal
   RUN --mount ${MOUNT_GLOBAL_STORE} \
       --mount ${MOUNT_DIST_NEWSTYLE} \
       ${CABAL} update hackage.haskell.org,2024-04-28T21:10:00Z
+  COPY --keep-ts . .
   RUN --mount ${MOUNT_GLOBAL_STORE} \
       --mount ${MOUNT_DIST_NEWSTYLE} \
       ${CABAL} build --only-dependencies ${target}
