@@ -344,6 +344,7 @@ startCue = do
   lift $ #status .= Playing
   void $
     Nothing & fix \self currentSt -> do
+      S.yield . Left . CueStatus =<< lift getCueStatus
       mcursor <- lift $ use #trackTape
       case mcursor of
         Nothing -> pure currentSt
@@ -401,6 +402,7 @@ startCue = do
   lift $ #cueTape .= (rightward =<< aCue)
   lift $ #trackTape .= Nothing
   lift $ #status .= Idle
+  S.yield . Left . CueStatus =<< lift getCueStatus
 
 readCueEvent :: CueingClientQueues -> STM CueEvent
 readCueEvent CueingClientQueues {..} = readSource evtQ
