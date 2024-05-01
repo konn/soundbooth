@@ -163,7 +163,7 @@ process ::
   CueRequest ->
   S.Stream (S.Of (Either CueEvent Request)) (Eff es) ()
 process (PlayerRequest req) = do
-  when (is #_StopAll req) $ stopCue False
+  when (is #_StopAll req) $ stopCue True
   S.yield $ Right req
 process CuePlay = startCue
 process CueStop = stopCue True
@@ -341,6 +341,7 @@ startCue ::
 startCue = do
   aCue <- lift $ use #cueTape
   lift $ #trackTape .= (within traverse1 . downward #commands =<< aCue)
+  lift $ #status .= Playing
   void $
     Nothing & fix \self currentSt -> do
       mcursor <- lift $ use #trackTape

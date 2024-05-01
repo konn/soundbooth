@@ -114,6 +114,7 @@ instance FromJSON CueRequest where
       "CueStop" -> pure CueStop
       "CueGoPrev" -> pure CueGoPrev
       "CueGoNext" -> pure CueGoNext
+      "GetCueState" -> pure GetCueState
       _ -> fail "invalid CueRequest"
       <|> flip
         (withObject "CueRequest")
@@ -125,7 +126,7 @@ instance ToJSON CueRequest where
   toJSON CueStop = "CueStop"
   toJSON CueGoNext = "CueGoNext"
   toJSON CueGoPrev = "CueGoPrev"
-  toJSON GetCueState = "GetCuelist"
+  toJSON GetCueState = "GetCueState"
   toJSON (CueGoto i) = object ["CueGoto" .= i]
   toJSON (PlayerRequest req) = toJSON req
 
