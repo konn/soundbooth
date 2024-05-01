@@ -167,7 +167,6 @@ relayEvent CueingQueues {..} =
                 Interrupted {} -> TSet.delete sn playing
                 Started {} -> TSet.insert sn playing
                 CurrentPlaylist {} -> pure ()
-                CurrentCues {} -> pure ()
                 KeepAlive -> pure ()
               mtargs <- TMap.lookup sn subs
               forM_ mtargs \targs ->

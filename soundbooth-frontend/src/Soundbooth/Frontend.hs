@@ -42,9 +42,7 @@ defaultMain = do
     update = updateModel
 
     events = defaultEvents
-    toSubs uri =
-      [ websocketSub uri protocols Websock
-      ]
+    toSubs uri = [websocketSub uri protocols Websock]
     protocols = Protocols []
     mountPoint = Nothing
     logLevel = Off
@@ -90,7 +88,7 @@ toggleCmd m@Model {..} sn =
   case OMap.lookup sn playlist of
     Just Playing
       | fadeOut ->
-          ( m {fadeOut = False}
+          ( m & #fadeOut .~ False
           , FadeOut
               Fading
                 { steps = 20
@@ -104,7 +102,7 @@ toggleCmd m@Model {..} sn =
       | crossFade
       , Just froms <-
           NE.nonEmpty $ filter ((== Playing) . snd) $ OMap.assocs playlist ->
-          ( m {crossFade = False}
+          ( m & #crossFade .~ False
           , CrossFade
               Fading
                 { steps = 20
@@ -115,7 +113,7 @@ toggleCmd m@Model {..} sn =
               (sn NE.:| [])
           )
       | fadeIn ->
-          ( m {fadeIn = False}
+          ( m & #fadeIn .~ False
           , FadeIn Fading {steps = 20, duration = 3.0, interpolation = Just Quadratic} sn
           )
       | otherwise -> (m, Play sn)

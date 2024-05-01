@@ -6,6 +6,8 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# OPTIONS_GHC -Wno-partial-fields #-}
 
 module Soundbooth.Common.Types (
   SoundName (..),
@@ -19,6 +21,11 @@ module Soundbooth.Common.Types (
   Playlist (..),
   Fading (..),
   CueEvent (..),
+  CueInfo (..),
+  CueStep (..),
+  CueID,
+  CueStatus (..),
+  CueingStatus (..),
 ) where
 
 import Control.Applicative ((<|>))
@@ -69,7 +76,25 @@ data Response = Ok | UnknownSound !SoundName | Error !Text
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
-type Cuelist = V.Vector (SoundName, Status)
+data CueInfo = CueInfo {name :: !Text, steps :: V.Vector CueStep}
+  deriving (Show, Eq, Ord, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+data CueStep
+  = Plays
+      { sounds :: !(NonEmpty SoundName)
+      , fadeIn :: !(Maybe Fading)
+      , fadeOut :: !(Maybe Fading)
+      }
+  | CrossFades
+      { sounds :: !(NonEmpty SoundName)
+      , crossFade :: !Fading
+      , fadeOut :: !(Maybe Fading)
+      }
+  deriving (Show, Eq, Ord, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+type Cuelist = V.Vector CueInfo
 
 data CueRequest
   = CuePlay
@@ -117,8 +142,18 @@ eventSounds (Finished sns) = NE.toList sns
 eventSounds CurrentPlaylist {} = []
 eventSounds KeepAlive = []
 
+type CueID = Int
+
+data CueStatus = IdleCue | CuePlayingStep !Int | CueFinished | CueInterrupted !Int
+  deriving (Show, Eq, Ord, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+data CueingStatus = Inactive | Active CueID CueInfo (Maybe CueStatus)
+  deriving (Show, Eq, Ord, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
 data CueEvent
-  = CueStatus !Int
+  = CueStatus !CueingStatus
   | CueCurrentCues !Cuelist
   | PlayerEvent !Event
   deriving (Show, Eq, Ord, Generic)

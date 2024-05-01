@@ -153,9 +153,6 @@ processReq StopAll = lift stopAll *> S.yield (Left Ok)
 processReq (FadeIn dur sn) = fadeIn dur sn
 processReq (FadeOut dur sn) = fadeOut dur sn
 processReq (CrossFade dur froms tos) = crossFade dur froms tos
-processReq GetCues = do
-  S.yield $ Left Ok
-  S.yield $ Right $ CurrentCues mempty
 
 interpolateStep :: Fading -> Float -> Float -> Int -> Float
 interpolateStep Fading {..} start end i =
