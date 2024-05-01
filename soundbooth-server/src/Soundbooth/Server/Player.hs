@@ -36,7 +36,6 @@ import Control.Monad (forM_, forever, unless, when)
 import Control.Monad.Trans (lift)
 import Data.Foldable (foldl')
 import Data.Function ((&))
-import Data.Functor (void)
 import Data.Functor.Of (Of)
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
@@ -54,6 +53,7 @@ import Effectful.Audio
 import Effectful.Concurrent (threadDelay)
 import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM
+import Effectful.Concurrent.SinkSource
 import Effectful.Dispatch.Static (unsafeEff_)
 import Effectful.Reader.Static (Reader, asks, runReader)
 import Focus qualified
@@ -107,7 +107,7 @@ checkIfStopped = forever do
   atomically $ forM_ inactives $ (`TMap.delete` sst)
   forM_ (NE.nonEmpty $ Set.toList inactives) $ \stops -> do
     evts <- asks @PlayerState (.queues.evtQ)
-    atomically $ writeTChan evts $ Finished stops
+    atomically $ writeSink evts $ Finished stops
 
 mainLoop ::
   ( Concurrent :> es
@@ -123,8 +123,8 @@ mainLoop = do
     & S.mapM_
       ( atomically
           . either
-            (writeTChan respQ)
-            (writeTChan evtQ)
+            (writeSink respQ)
+            (writeSink evtQ)
       )
 
 processReq ::

@@ -50,6 +50,7 @@ library
   -- cabal-gild: discover src
   exposed-modules:
     Effectful.Audio
+    Effectful.Concurrent.SinkSource
     Effectful.WebSockets
     Soundbooth.Server.App.REPL
     Soundbooth.Server.App.Server

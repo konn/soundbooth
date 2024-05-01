@@ -44,6 +44,7 @@ import Effectful
 import Effectful.Audio
 import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM
+import Effectful.Concurrent.SinkSource
 import GHC.Generics
 import Numeric.Natural
 import Soundbooth.Common.Types
@@ -110,38 +111,38 @@ instance J.ToJSON RawCueCommand where
   toJSON = J.genericToJSON cmdOpts
 
 data PlayerQueues = PlayerQueues
-  { evtQ :: TChan Event
-  , respQ :: TChan Response
+  { evtQ :: Sink Event
+  , respQ :: Sink Response
   , reqQ :: TBQueue Request
   }
 
 data ClientQueues = ClientQueues
-  { evtQ :: TChan Event
-  , respQ :: TChan Response
+  { evtQ :: Source Event
+  , respQ :: Source Response
   , reqQ :: TBQueue Request
   }
 
 sendEvent :: PlayerQueues -> Event -> STM ()
-sendEvent PlayerQueues {evtQ} = writeTChan evtQ
+sendEvent PlayerQueues {evtQ} = writeSink evtQ
 
 readEvent :: ClientQueues -> STM Event
-readEvent ClientQueues {evtQ} = readTChan evtQ
+readEvent ClientQueues {evtQ} = readSource evtQ
 
 readResponse :: ClientQueues -> STM Response
-readResponse ClientQueues {respQ} = readTChan respQ
+readResponse ClientQueues {respQ} = readSource respQ
 
 sendRequest :: ClientQueues -> Request -> STM ()
 sendRequest ClientQueues {reqQ} = writeTBQueue reqQ
 
 subscribe :: (Concurrent :> es) => PlayerQueues -> Eff es ClientQueues
 subscribe qs = do
-  evtQ <- atomically $ dupTChan qs.evtQ
-  respQ <- atomically $ dupTChan qs.respQ
+  evtQ <- atomically $ subscribeSink qs.evtQ
+  respQ <- atomically $ subscribeSink qs.respQ
   pure ClientQueues {reqQ = qs.reqQ, ..}
 
 newPlayerQueues :: (Concurrent :> es) => Natural -> Eff es PlayerQueues
 newPlayerQueues size = do
-  evtQ <- newBroadcastTChanIO
-  respQ <- newBroadcastTChanIO
+  evtQ <- newSinkIO
+  respQ <- newSinkIO
   reqQ <- newTBQueueIO size
   pure PlayerQueues {..}

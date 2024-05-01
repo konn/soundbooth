@@ -17,39 +17,33 @@ module Soundbooth.Server.Cueing (
   newCueingQueues,
   CueingClientQueues (),
   subscribeCue,
-  toPlayerQueues,
   runCueingServer,
 ) where
 
-import Control.Arrow ((>>>))
-import Control.Concurrent.STM.TBMQueue (TBMQueue, closeTBMQueue, newTBMQueue, readTBMQueue)
+import Control.Concurrent.STM.TBMQueue (TBMQueue, closeTBMQueue, newTBMQueue, readTBMQueue, writeTBMQueue)
 import Control.Exception.Safe (bracket)
 import Control.Foldl qualified as L
-import Control.Lens (preview, traverse1, view, (^.))
-import Control.Monad (forM)
-import Control.Monad.Loops (whileJust_)
+import Control.Lens (traverse1, (^.))
+import Control.Monad (forM_, guard, when)
 import Control.Monad.Trans
 import Control.Zipper hiding ((:>))
-import Data.ByteString qualified as BS
 import Data.Foldable (fold)
-import Data.Foldable qualified as F
 import Data.Function
 import Data.Functor (void)
 import Data.Functor.Of (Of)
 import Data.Generics.Labels ()
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
-import Data.Maybe (fromMaybe)
 import Data.Vector qualified as V
 import DeferredFolds.UnfoldlM qualified as UL
 import Effectful hiding ((:>>))
-import Effectful.Audio (Sample)
 import Effectful.Concurrent.Async
 import Effectful.Concurrent.STM
-import Effectful.Random.Static (Random, uniform)
-import Effectful.Reader.Static (Reader)
+import Effectful.Concurrent.SinkSource
+import Effectful.Random.Static (Random, evalRandom, getStdGen, uniform)
+import Effectful.Reader.Static (Reader, runReader)
 import Effectful.Reader.Static.Lens qualified as EffL
-import Effectful.State.Static.Shared (State)
+import Effectful.State.Static.Shared (State, evalState)
 import Effectful.State.Static.Shared.Lens
 import Focus qualified
 import GHC.Generics
@@ -57,81 +51,129 @@ import Soundbooth.Common.Types
 import Soundbooth.Server.Player
 import Soundbooth.Server.Types
 import StmContainers.Map qualified as TMap
+import StmContainers.Set qualified as TSet
 import Streaming qualified as S
 import Streaming.Prelude qualified as S
 
 data CueingQueues = CueingQueues
   { cueReqQ :: TBQueue CueRequest
   , playerReqQ :: TBQueue Request
-  , evtQ :: TChan Event
-  , respQ :: TChan Response
+  , incomingEvtQ :: Source Event
+  , outgoingEvtQ :: Sink CueEvent
+  , incomingRespQ :: Source Response
+  , outgoingRespQ :: Sink Response
   }
 
 data CueingClientQueues = CueingClientQueues
   { cueReqQ :: TBQueue CueRequest
-  , evtQ :: TChan Event
-  , respQ :: TChan Response
+  , evtQ :: Source CueEvent
+  , respQ :: Source Response
   }
   deriving (Generic)
 
 data CueingState = CueingState {queues :: PlayerQueues}
   deriving (Generic)
 
-newCueingQueues :: (Concurrent :> es) => Eff es CueingQueues
+newCueingQueues :: (Concurrent :> es) => Eff es (PlayerQueues, CueingQueues)
 newCueingQueues = do
   cueReqQ <- newTBQueueIO 100
-  playerReqQ <- newTBQueueIO 100
-  evtQ <- newBroadcastTChanIO
-  respQ <- newBroadcastTChanIO
-  pure CueingQueues {..}
-
-toPlayerQueues :: CueingQueues -> PlayerQueues
-toPlayerQueues qs =
-  let evtQ = qs.evtQ
-      respQ = qs.respQ
-      reqQ = qs.playerReqQ
-   in PlayerQueues {..}
+  reqQ@playerReqQ <- newTBQueueIO 100
+  evtQ <- newSinkIO
+  incomingEvtQ <- atomically $ subscribeSink evtQ
+  respQ <- newSinkIO
+  incomingRespQ <- atomically $ subscribeSink respQ
+  outgoingEvtQ <- newSinkIO
+  outgoingRespQ <- newSinkIO
+  pure (PlayerQueues {..}, CueingQueues {..})
 
 subscribeCue :: (Concurrent :> es) => CueingQueues -> Eff es CueingClientQueues
 subscribeCue qs = do
   let cueReqQ = qs.cueReqQ
-  evtQ <- atomically $ dupTChan qs.evtQ
-  respQ <- atomically $ dupTChan qs.respQ
+  evtQ <- atomically $ subscribeSink qs.outgoingEvtQ
+  respQ <- atomically $ subscribeSink qs.outgoingRespQ
   pure $ CueingClientQueues {..}
 
 runCueingServer ::
   (IOE :> es, Concurrent :> es) =>
   PlayerOptions ->
+  PlayerQueues ->
   CueingQueues ->
   Config ->
   Eff es ()
-runCueingServer playerOpts qs cs = do
-  runPlayer playerOpts (toPlayerQueues qs) cs
-    `race_` relay qs
+runCueingServer playerOpts pqs qs cfg = do
+  nowPlaying <- liftIO TSet.newIO
+  subscription <- liftIO TMap.newIO
+  let cueTape = traverse `within` zipper cfg.cues
+      trackTape = Nothing
+      fadeOut = Nothing
+      status = Idle
+  g <- getStdGen
+  evalRandom g $
+    evalState CueState {..} $
+      runReader CueEnv {..} $
+        relayRequest qs
+          `race_` relayEvent qs
+          `race_` runPlayer playerOpts pqs cfg
 
-relay :: (Concurrent :> es) => CueingQueues -> Eff es ()
-relay qs =
+relayRequest :: (Concurrent :> es, State CueState :> es, Reader CueEnv :> es, Random :> es) => CueingQueues -> Eff es ()
+relayRequest qs =
   S.repeatM (atomically $ readTBQueue qs.cueReqQ)
     & flip S.for process
-    & S.mapM_ (atomically . writeTBQueue qs.playerReqQ)
+    & S.mapM_ (atomically . either (writeSink qs.outgoingEvtQ) (writeTBQueue qs.playerReqQ))
 
-process :: CueRequest -> S.Stream (S.Of Request) (Eff es) ()
-process (PlayerRequest req) = S.yield req
-process _ = mempty
+process ::
+  (State CueState :> es, Reader CueEnv :> es, Concurrent :> es, Random :> es) =>
+  CueRequest ->
+  S.Stream (S.Of (Either CueEvent Request)) (Eff es) ()
+process (PlayerRequest req) = S.yield $ Right req
+process CuePlay = startCue
+process CueStop = stopCue True
+process CueGoNext = stopCue True
+process CueGoPrev = do
+  stopCue False
+  lift $ #cueTape %= fmap (tug leftward)
+process (CueGoto i) = do
+  stopCue False
+  lift $ #cueTape %= fmap (tug (moveTo i))
 
 data CueEnv = CueEnv
-  { nowPlaying :: TMap.Map SoundName Sample
+  { nowPlaying :: TSet.Set SoundName
   , subscription :: TMap.Map SoundName (TMap.Map Int (TBMQueue Event))
   }
   deriving (Generic)
 
 data CueState = CueState
-  { cueTape :: Maybe (Top :>> V.Vector Cue :>> Cue)
-  , trackTape :: Maybe (Top :>> V.Vector Cue :>> Cue :>> NonEmpty CueCommand :>> CueCommand)
+  { cueTape :: Maybe (Top :>> V.Vector RawCue :>> RawCue)
+  , trackTape :: Maybe (Top :>> V.Vector RawCue :>> RawCue :>> NonEmpty RawCueCommand :>> RawCueCommand)
   , fadeOut :: Maybe Fading
   , status :: Status
   }
   deriving (Generic)
+
+relayEvent ::
+  (Concurrent :> es, Reader CueEnv :> es) =>
+  CueingQueues ->
+  Eff es ()
+relayEvent CueingQueues {..} =
+  S.repeatM (atomically $ readSource incomingEvtQ)
+    & S.chain
+      ( \evt -> do
+          subs <- EffL.view #subscription
+          playing <- EffL.view #nowPlaying
+          atomically do
+            forM_ (eventSounds evt) \sn -> do
+              case evt of
+                Finished {} -> TSet.delete sn playing
+                Interrupted {} -> TSet.delete sn playing
+                Started {} -> TSet.insert sn playing
+                CurrentPlaylist {} -> pure ()
+                CurrentCues {} -> pure ()
+                KeepAlive -> pure ()
+              mtargs <- TMap.lookup sn subs
+              forM_ mtargs \targs ->
+                UL.foldM (L.mapM_ $ (`writeTBMQueue` evt) . snd) (TMap.unfoldlM targs)
+      )
+    & S.mapM_ (atomically . writeSink outgoingEvtQ . PlayerEvent)
 
 subscribeSound ::
   (Concurrent :> es, Reader CueEnv :> es, Random :> es) =>
@@ -166,9 +208,7 @@ subscribeSound name =
                 Just dic -> do
                   TMap.delete uuid dic
                   isNull <- TMap.null dic
-                  if isNull
-                    then pure Nothing
-                    else pure $ Just dic
+                  pure $ dic <$ guard (not isNull)
             )
             name
             subs
@@ -186,6 +226,33 @@ instance Semigroup St where
 instance Monoid St where
   mempty = Done
 
+stopCue ::
+  (State CueState :> es, Reader CueEnv :> es, Concurrent :> es) =>
+  -- | Goto next cue after stopping?
+  Bool ->
+  S.Stream (Of (Either CueEvent Request)) (Eff es) ()
+stopCue goNext = do
+  mCue <- lift $ use #cueTape
+  forM_ mCue \aCue -> do
+    st <- lift $ use #status
+    case st of
+      Idle -> pure ()
+      Playing -> do
+        lift $ #status .= Idle
+        lift $ #trackTape .= Nothing
+        when goNext $
+          lift $
+            #cueTape ?= tug rightward aCue
+        fading <- lift $ use #fadeOut <* (#fadeOut .= Nothing)
+        nowPl <- lift $ EffL.view #nowPlaying
+        playing <-
+          lift $
+            atomically $
+              UL.foldM (L.generalize L.set) (TSet.unfoldlM nowPl)
+                <* TSet.reset nowPl
+        mapM_ (S.yield . Right . maybe Stop FadeOut fading) playing
+        pure undefined
+
 startCue ::
   (State CueState :> es, Reader CueEnv :> es, Concurrent :> es, Random :> es) =>
   S.Stream (Of (Either CueEvent Request)) (Eff es) ()
@@ -202,11 +269,10 @@ startCue = do
             PlayCue {..} -> do
               S.each $
                 fmap
-                  ( (.name)
-                      >>> fmap (fmap Right) . maybe
-                        <$> Play
-                        <*> flip FadeIn
-                        <*> pure fadeIn
+                  ( fmap (fmap Right) . maybe
+                      <$> Play
+                      <*> flip FadeIn
+                      <*> pure fadeIn
                   )
                   play
               lift $ #fadeOut .= fadeOut
@@ -215,24 +281,23 @@ startCue = do
               froms0 <- lift $ do
                 playing <- EffL.view #nowPlaying
                 atomically $
-                  UL.foldM (L.generalize $ L.premap fst L.set) (TMap.unfoldlM playing)
-                    <* TMap.reset playing
-              case NE.nonEmpty $ F.toList froms0 of
+                  UL.foldM (NE.nonEmpty <$> L.generalize L.nub) (TSet.unfoldlM playing)
+                    <* TSet.reset playing
+              case froms0 of
                 Nothing ->
                   S.each $
-                    Right . FadeIn crossFade . (.name) <$> crossFadeTo
+                    Right . FadeIn crossFade <$> crossFadeTo
                 Just froms ->
                   S.yield $
                     Right $
-                      CrossFade crossFade froms $
-                        (.name) <$> crossFadeTo
+                      CrossFade crossFade froms crossFadeTo
               lift $ #fadeOut .= fadeOut
               pure crossFadeTo
           st' <-
             lift $
               fold
                 <$> mapConcurrently
-                  ( \NamedSample {..} ->
+                  ( \name ->
                       subscribeSound name \evts -> fix \go -> do
                         r <- atomically $ readTBMQueue evts
                         maybe

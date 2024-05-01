@@ -59,7 +59,9 @@ library
     vector,
 
   -- cabal-gild: discover src
-  exposed-modules: Soundbooth.Common.Types
+  exposed-modules:
+    Soundbooth.Common.Types
+
   hs-source-dirs: src
 
 executable soundbooth-core-exe

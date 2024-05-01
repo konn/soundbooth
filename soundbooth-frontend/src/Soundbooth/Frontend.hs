@@ -123,6 +123,11 @@ toggleCmd m@Model {..} sn =
 handleResponse :: Response -> Model -> Effect Action Model
 handleResponse = const noEff
 
+handleCueEvent :: CueEvent -> Model -> Effect Action Model
+handleCueEvent (PlayerEvent evt) m = handleEvent evt m
+handleCueEvent (CueCurrentCues cues) m = noEff m
+handleCueEvent (CueStatus _) m = noEff m
+
 handleEvent :: Event -> Model -> Effect Action Model
 handleEvent (Started sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Playing)) sns)
@@ -132,7 +137,6 @@ handleEvent (Interrupted sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Idle)) sns)
 handleEvent (CurrentPlaylist pl) =
   noEff . (#playlist .~ OMap.fromList (V.toList pl.sounds))
-handleEvent (CurrentCues _) = noEff
 handleEvent KeepAlive = noEff
 
 mdiDark :: MisoString -> View a

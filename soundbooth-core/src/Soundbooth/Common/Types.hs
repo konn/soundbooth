@@ -13,6 +13,7 @@ module Soundbooth.Common.Types (
   Request (..),
   Response (..),
   Event (..),
+  eventSounds,
   Status (..),
   Interpolation (..),
   Playlist (..),
@@ -25,6 +26,7 @@ import Control.DeepSeq (NFData)
 import Data.Aeson
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty qualified as NE
 import Data.String (IsString)
 import Data.Text (Text)
 import Data.Vector qualified as V
@@ -60,7 +62,6 @@ data Request
   | CrossFade !Fading !(NonEmpty SoundName) !(NonEmpty SoundName)
   | StopAll
   | GetPlaylist
-  | GetCues
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
@@ -71,22 +72,32 @@ data Response = Ok | UnknownSound !SoundName | Error !Text
 type Cuelist = V.Vector (SoundName, Status)
 
 data CueRequest
-  = CuePlay !Int
-  | CueStop !Int
+  = CuePlay
+  | CueStop
+  | CueGoPrev
+  | CueGoNext
   | CueGoto !Int
   | PlayerRequest !Request
   deriving (Show, Eq, Ord, Generic)
 
 instance FromJSON CueRequest where
-  parseJSON = withObject "CueRequest" $ \o -> do
-    CuePlay <$> o .: "CuePlay"
-      <|> CueStop <$> o .: "CueStop"
-      <|> CueGoto <$> o .: "CueGoto"
-      <|> PlayerRequest <$> parseJSON (Object o)
+  parseJSON v =
+    flip (withText "CuePlay") v \case
+      "CuePlay" -> pure CuePlay
+      "CueStop" -> pure CueStop
+      "CueGoPrev" -> pure CueGoPrev
+      "CueGoNext" -> pure CueGoNext
+      _ -> fail "invalid CueRequest"
+      <|> flip
+        (withObject "CueRequest")
+        v
+        \o -> CueGoto <$> o .: "CueGoto" <|> PlayerRequest <$> parseJSON (Object o)
 
 instance ToJSON CueRequest where
-  toJSON (CuePlay i) = object ["CuePlay" .= i]
-  toJSON (CueStop i) = object ["CueStop" .= i]
+  toJSON CuePlay = "CuePlay"
+  toJSON CueStop = "CueStop"
+  toJSON CueGoNext = "CueGoNext"
+  toJSON CueGoPrev = "CueGoPrev"
   toJSON (CueGoto i) = object ["CueGoto" .= i]
   toJSON (PlayerRequest req) = toJSON req
 
@@ -95,21 +106,30 @@ data Event
   | Interrupted !(NonEmpty SoundName)
   | Finished !(NonEmpty SoundName)
   | CurrentPlaylist !Playlist
-  | CurrentCues !Cuelist
   | KeepAlive
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+eventSounds :: Event -> [SoundName]
+eventSounds (Started sns) = NE.toList sns
+eventSounds (Interrupted sns) = NE.toList sns
+eventSounds (Finished sns) = NE.toList sns
+eventSounds CurrentPlaylist {} = []
+eventSounds KeepAlive = []
+
 data CueEvent
   = CueStatus !Int
+  | CueCurrentCues !Cuelist
   | PlayerEvent !Event
   deriving (Show, Eq, Ord, Generic)
 
 instance ToJSON CueEvent where
   toJSON (PlayerEvent e) = toJSON e
   toJSON (CueStatus i) = object ["CueStatus" .= i]
+  toJSON (CueCurrentCues i) = object ["CueCurrentCues" .= i]
 
 instance FromJSON CueEvent where
   parseJSON = withObject "CueEvent" $ \o -> do
     CueStatus <$> o .: "CueStatus"
+      <|> CueCurrentCues <$> o .: "CueCurrentCues"
       <|> PlayerEvent <$> parseJSON (Object o)
