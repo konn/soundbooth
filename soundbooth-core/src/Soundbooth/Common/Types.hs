@@ -103,7 +103,7 @@ data CueRequest
   | CueGoPrev
   | CueGoNext
   | CueGoto !Int
-  | GetCuelist
+  | GetCueState
   | PlayerRequest !Request
   deriving (Show, Eq, Ord, Generic)
 
@@ -125,7 +125,7 @@ instance ToJSON CueRequest where
   toJSON CueStop = "CueStop"
   toJSON CueGoNext = "CueGoNext"
   toJSON CueGoPrev = "CueGoPrev"
-  toJSON GetCuelist = "GetCuelist"
+  toJSON GetCueState = "GetCuelist"
   toJSON (CueGoto i) = object ["CueGoto" .= i]
   toJSON (PlayerRequest req) = toJSON req
 
@@ -151,7 +151,7 @@ data CueStatus = IdleCue | CuePlayingStep !Int | CueFinished | CueInterrupted !I
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
-data CueingStatus = Inactive | Active CueID CueInfo (Maybe CueStatus)
+data CueingStatus = Inactive | Active CueID CueInfo CueStatus
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
 

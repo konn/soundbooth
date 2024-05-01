@@ -11,14 +11,16 @@ import Control.Lens
 import Data.Aeson (FromJSON)
 import Data.Aeson.Types (FromJSON (..))
 import Data.Coerce (coerce)
-import Data.Foldable (foldMap')
+import Data.Foldable (fold, foldMap')
 import Data.Generics.Labels ()
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
 import Data.Map.Ordered.Strict qualified as OMap
 import Data.Maybe (maybeToList)
+import Data.String (fromString)
 import Data.Text qualified as T
+import Data.Traversable (forM)
 import Data.Vector qualified as V
 import GHC.Generics
 import Miso
@@ -40,6 +42,7 @@ defaultMain = do
         , crossFade = False
         , activeTab = Tracks
         , cuelist = mempty
+        , cueStatus = Inactive
         }
     update = updateModel
 
@@ -73,9 +76,14 @@ updateModel (Websock (WebSocketMessage (CueEvent evt))) m = handleCueEvent evt m
 updateModel (Websock (WebSocketMessage (Response rsp))) m = handleResponse rsp m
 updateModel (Websock _) m = noEff m
 updateModel (SwitchTab tab) m = noEff $ m & #activeTab .~ tab
+updateModel Sync m =
+  m <# do
+    NoOp <$ mapM_ send [GetCueState, PlayerRequest GetPlaylist]
 updateModel (Toggle sound) m =
   let (m', cmd) = PlayerRequest <$> toggleCmd m sound
    in m' <# do NoOp <$ send cmd
+updateModel (ToggleCue i) m = do
+  m <# do NoOp <$ mapM_ send (toggleCue m i)
 updateModel NoOp m = noEff m
 updateModel (CueRequest req) m = m <# do NoOp <$ send req
 updateModel ToggleFadeIn m =
@@ -84,6 +92,15 @@ updateModel ToggleFadeOut m =
   noEff $ m & #fadeOut %~ not
 updateModel ToggleCrossFade m =
   noEff $ m & #crossFade %~ not
+
+toggleCue :: Model -> CueID -> [CueRequest]
+toggleCue m cueID =
+  flip foldMap (m.cuelist V.!? cueID) \CueInfo {} ->
+    case m.cueStatus of
+      Inactive -> [CueGoto cueID, CuePlay]
+      Active i _ _
+        | i == cueID -> [CueStop]
+        | otherwise -> [CueGoto cueID, CuePlay]
 
 toggleCmd :: Model -> SoundName -> (Model, Request)
 toggleCmd m@Model {..} sn =
@@ -159,7 +176,7 @@ viewModel m@Model {..} =
         [ section_
             [class_ "buttons"]
             [ button_
-                [onClick $ CueRequest $ PlayerRequest GetPlaylist, class_ "button is-success is-outlined"]
+                [onClick $ Sync, class_ "button is-success is-outlined"]
                 [mdiDark "sync"]
             , button_
                 [onClick $ CueRequest $ PlayerRequest StopAll, class_ "button is-danger is-outlined"]
@@ -214,7 +231,7 @@ viewModel m@Model {..} =
     ]
 
 renderTab :: Tab -> Model -> [View Action]
-renderTab _ model =
+renderTab Tracks model =
   [ section_
       [class_ "main buttons columns"]
       [ a_
@@ -225,6 +242,28 @@ renderTab _ model =
       | (sn, s) <- OMap.assocs model.playlist
       ]
   ]
+renderTab Cues model =
+  [ section_
+      [class_ "main columns"]
+      [ div_
+        [class_ "column is-full is-multiline"]
+        [ h3_
+            [ class_ $
+                unwords $
+                  "button"
+                    : "is-fullwidth"
+                    : ["is-primary" | isActive]
+            ]
+            ["Cue #", vshow i, ": ", text $ cue.name]
+        , div_ [class_ "container"] [p_ [] ["Steps: ", vshow $ V.length $ cue.steps]]
+        ]
+      | (i, cue) <- V.toList $ V.indexed model.cuelist
+      , let isActive = (model ^? #cueStatus . #_Active . _1) == Just i
+      ]
+  ]
+
+vshow :: (Show b) => b -> View a
+vshow = fromString . show
 
 toIcon :: Tab -> View Action
 toIcon Tracks = mdiDark "queue_music"
@@ -244,6 +283,7 @@ data Model = Model
   , crossFade :: !Bool
   , activeTab :: !Tab
   , cuelist :: !Cuelist
+  , cueStatus :: !CueingStatus
   }
   deriving (Show, Eq, Ord, Generic)
 
@@ -255,8 +295,10 @@ instance FromJSON EventOrResponse where
 
 data Action
   = Websock (WebSocket EventOrResponse)
-  | Toggle SoundName
+  | Toggle !SoundName
+  | ToggleCue !Int
   | CueRequest CueRequest
+  | Sync
   | SwitchTab Tab
   | ToggleFadeIn
   | ToggleFadeOut
