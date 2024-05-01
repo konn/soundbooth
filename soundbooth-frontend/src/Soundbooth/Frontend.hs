@@ -244,7 +244,7 @@ renderTab Tracks model =
   ]
 renderTab Cues model =
   [ section_
-      [class_ "main columns"]
+      [class_ "main"]
       [ div_
         [class_ "column is-full is-multiline"]
         [ h3_
@@ -253,6 +253,7 @@ renderTab Cues model =
                   "button"
                     : "is-fullwidth"
                     : ["is-primary" | isActive]
+            , onClick $ ToggleCue i
             ]
             ["Cue #", vshow i, ": ", text $ cue.name]
         , div_ [class_ "container"] [p_ [] ["Steps: ", vshow $ V.length $ cue.steps]]
