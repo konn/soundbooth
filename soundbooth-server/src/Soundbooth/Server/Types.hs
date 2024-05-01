@@ -23,6 +23,7 @@ module Soundbooth.Server.Types (
   RawCueCommand,
   SoundName (..),
   Request (..),
+  CueRequest (..),
   Response (..),
   Event (..),
   newPlayerQueues,
@@ -68,7 +69,6 @@ data CueState
 data Cue' a = Cue
   { name :: Text
   , commands :: NonEmpty (CueCommand' a)
-  , continue :: Bool
   }
   deriving (Show, Eq, Ord, Generic, Generic1, Functor, Foldable, Traversable)
 
@@ -78,7 +78,6 @@ instance J.FromJSON RawCue where
   parseJSON = J.withObject "{cue}" \o -> do
     name <- o J..: "name"
     commands <- o J..: "commands"
-    continue <- o J..:? "continue" J..!= False
     pure Cue {..}
 
 type RawCueCommand = CueCommand' SoundName
@@ -96,8 +95,8 @@ data CueCommand' a
       }
   | CrossFadeTo
       { crossFadeTo :: NonEmpty a
-      , duration :: !Double
-      , steps :: !Int
+      , crossFade :: !Fading
+      , fadeOut :: Maybe Fading
       }
   deriving (Show, Eq, Ord, Generic, Generic1, Functor, Foldable, Traversable)
 

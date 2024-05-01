@@ -107,7 +107,7 @@ checkIfStopped = forever do
   atomically $ forM_ inactives $ (`TMap.delete` sst)
   forM_ (NE.nonEmpty $ Set.toList inactives) $ \stops -> do
     evts <- asks @PlayerState (.queues.evtQ)
-    atomically $ writeTChan evts $ Stopped stops
+    atomically $ writeTChan evts $ Finished stops
 
 mainLoop ::
   ( Concurrent :> es
@@ -220,10 +220,15 @@ fadeOut dur sn = withSample sn \_ -> do
         b <- lift $ update s False (level i) (level i) 0.0 1.0
         unless b $ do
           lift $ atomically (TMap.focus Focus.delete sn playing)
-          S.yield $ Right $ Stopped $ NE.singleton sn
+          S.yield $ Right $ Finished $ NE.singleton sn
         unless (i == dur.steps) $ lift $ threadDelay usec
       lift $ atomically (TMap.focus Focus.delete sn playing)
-      lift $ void $ stop s
+      b <- lift $ stop s
+      when b $
+        S.yield $
+          Right $
+            Interrupted $
+              NE.singleton sn
       S.yield $ Left Ok
 
 crossFade ::
@@ -261,7 +266,7 @@ crossFade dur froms tos = do
           b <- lift $ update s False (outLevel i) (outLevel i) 0.0 1.0
           unless b do
             lift $ atomically $ TMap.focus Focus.delete sn playing
-            S.yield $ Right $ Stopped $ NE.singleton sn
+            S.yield $ Right $ Finished $ NE.singleton sn
       )
     forM_ tos' \(sn, s) -> do
       b <-

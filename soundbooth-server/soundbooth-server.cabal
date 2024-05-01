@@ -53,6 +53,7 @@ library
     Effectful.WebSockets
     Soundbooth.Server.App.REPL
     Soundbooth.Server.App.Server
+    Soundbooth.Server.Cueing
     Soundbooth.Server.Orphans
     Soundbooth.Server.Player
     Soundbooth.Server.Types
@@ -65,6 +66,9 @@ library
     deepseq,
     deferred-folds,
     effectful,
+    effectful-core,
+    effectful-lens,
+    effectful-plugin,
     focus,
     foldl,
     generic-lens,
@@ -73,10 +77,12 @@ library
     log-base,
     log-effectful,
     log-effectful-extra,
+    monad-loops,
     mtl,
     optparse-applicative,
     ordered-containers,
     proteaaudio,
+    random-effectful,
     safe-exceptions,
     servant,
     servant-effectful,
@@ -96,6 +102,7 @@ library
     warp,
     websockets,
     yaml,
+    zippers,
 
 executable soundbooth-repl
   import: defaults

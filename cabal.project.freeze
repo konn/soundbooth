@@ -2985,4 +2985,4 @@ source-repository-package
   type: git
   location: https://github.com/deepflowinc/effectful-extras.git
   tag: 11fec60ba00e63beb12cd57a96396ca84bc6d3e7
-  subdir: log-effectful-extra
+  subdir: log-effectful-extra effectful-lens random-effectful

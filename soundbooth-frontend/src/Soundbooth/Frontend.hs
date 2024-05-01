@@ -126,7 +126,7 @@ handleResponse = const noEff
 handleEvent :: Event -> Model -> Effect Action Model
 handleEvent (Started sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Playing)) sns)
-handleEvent (Stopped sns) =
+handleEvent (Finished sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Idle)) sns)
 handleEvent (Interrupted sns) =
   noEff . (#playlist %~ alaf Endo foldMap' (OMap.alter (const $ Just Idle)) sns)

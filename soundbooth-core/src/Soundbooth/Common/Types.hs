@@ -17,6 +17,7 @@ module Soundbooth.Common.Types (
   Interpolation (..),
   Playlist (..),
   Fading (..),
+  CueEvent (..),
 ) where
 
 import Control.Applicative ((<|>))
@@ -92,9 +93,23 @@ instance ToJSON CueRequest where
 data Event
   = Started !(NonEmpty SoundName)
   | Interrupted !(NonEmpty SoundName)
-  | Stopped !(NonEmpty SoundName)
+  | Finished !(NonEmpty SoundName)
   | CurrentPlaylist !Playlist
   | CurrentCues !Cuelist
   | KeepAlive
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON, ToJSON)
+
+data CueEvent
+  = CueStatus !Int
+  | PlayerEvent !Event
+  deriving (Show, Eq, Ord, Generic)
+
+instance ToJSON CueEvent where
+  toJSON (PlayerEvent e) = toJSON e
+  toJSON (CueStatus i) = object ["CueStatus" .= i]
+
+instance FromJSON CueEvent where
+  parseJSON = withObject "CueEvent" $ \o -> do
+    CueStatus <$> o .: "CueStatus"
+      <|> PlayerEvent <$> parseJSON (Object o)
