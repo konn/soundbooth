@@ -26,6 +26,7 @@ module Soundbooth.Common.Types (
   CueID,
   CueStatus (..),
   CueingStatus (..),
+  Cuelist,
 ) where
 
 import Control.Applicative ((<|>))
@@ -102,6 +103,7 @@ data CueRequest
   | CueGoPrev
   | CueGoNext
   | CueGoto !Int
+  | GetCuelist
   | PlayerRequest !Request
   deriving (Show, Eq, Ord, Generic)
 
@@ -123,6 +125,7 @@ instance ToJSON CueRequest where
   toJSON CueStop = "CueStop"
   toJSON CueGoNext = "CueGoNext"
   toJSON CueGoPrev = "CueGoPrev"
+  toJSON GetCuelist = "GetCuelist"
   toJSON (CueGoto i) = object ["CueGoto" .= i]
   toJSON (PlayerRequest req) = toJSON req
 

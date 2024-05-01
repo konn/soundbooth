@@ -13,11 +13,16 @@
 {-# OPTIONS_GHC -fplugin Effectful.Plugin #-}
 
 module Soundbooth.Server.Cueing (
+  PlayerOptions (..),
   CueingQueues (..),
   newCueingQueues,
   CueingClientQueues (),
+  Config (..),
   subscribeCue,
   runCueingServer,
+  readCueEvent,
+  readCueResponse,
+  sendCueRequest,
 ) where
 
 import Control.Concurrent.STM.TBMQueue (TBMQueue, closeTBMQueue, newTBMQueue, readTBMQueue, writeTBMQueue)
@@ -107,22 +112,50 @@ runCueingServer playerOpts pqs qs cfg = do
       trackTape = Nothing
       fadeOut = Nothing
       status = Idle
+      cuelist = buildCuelist cfg.cues
   g <- getStdGen
   evalRandom g $
     evalState CueState {..} $
       runReader CueEnv {..} $
         relayRequest qs
           `race_` relayEvent qs
+          `race_` relayResponse qs
           `race_` runPlayer playerOpts pqs cfg
+
+buildCuelist :: V.Vector RawCue -> Cuelist
+buildCuelist = V.map \Cue {..} ->
+  let steps =
+        V.map
+          \case
+            PlayCue {..} -> Plays {sounds = play, ..}
+            CrossFadeTo {..} -> CrossFades {sounds = crossFadeTo, ..}
+          $ V.fromList
+          $ NE.toList commands
+   in CueInfo {..}
 
 relayRequest :: (Concurrent :> es, State CueState :> es, Reader CueEnv :> es, Random :> es) => CueingQueues -> Eff es ()
 relayRequest qs =
   S.repeatM (atomically $ readTBQueue qs.cueReqQ)
     & flip S.for process
-    & S.mapM_ (atomically . either (writeSink qs.outgoingEvtQ) (writeTBQueue qs.playerReqQ))
+    & S.mapM_ (atomically . either (sendCueEvent qs) (sendPlayerRequest qs))
+
+relayResponse :: (Concurrent :> es) => CueingQueues -> Eff es ()
+relayResponse qs =
+  S.repeatM (atomically $ readSource qs.incomingRespQ)
+    & S.mapM_ (atomically . writeSink qs.outgoingRespQ)
+
+sendCueEvent :: CueingQueues -> CueEvent -> STM ()
+sendCueEvent CueingQueues {..} = writeSink outgoingEvtQ
+
+sendPlayerRequest :: CueingQueues -> Request -> STM ()
+sendPlayerRequest CueingQueues {..} = writeTBQueue playerReqQ
 
 process ::
-  (State CueState :> es, Reader CueEnv :> es, Concurrent :> es, Random :> es) =>
+  ( State CueState :> es
+  , Reader CueEnv :> es
+  , Concurrent :> es
+  , Random :> es
+  ) =>
   CueRequest ->
   S.Stream (S.Of (Either CueEvent Request)) (Eff es) ()
 process (PlayerRequest req) = S.yield $ Right req
@@ -135,10 +168,13 @@ process CueGoPrev = do
 process (CueGoto i) = do
   stopCue False
   lift $ #cueTape %= fmap (tug (moveTo i))
+process GetCuelist = do
+  S.yield . Left . CueCurrentCues =<< lift (EffL.view #cuelist)
 
 data CueEnv = CueEnv
   { nowPlaying :: TSet.Set SoundName
   , subscription :: TMap.Map SoundName (TMap.Map Int (TBMQueue Event))
+  , cuelist :: Cuelist
   }
   deriving (Generic)
 
@@ -317,3 +353,12 @@ startCue = do
   lift $ #cueTape .= (rightward =<< aCue)
   lift $ #trackTape .= Nothing
   lift $ #status .= Idle
+
+readCueEvent :: CueingClientQueues -> STM CueEvent
+readCueEvent CueingClientQueues {..} = readSource evtQ
+
+readCueResponse :: CueingClientQueues -> STM Response
+readCueResponse CueingClientQueues {..} = readSource respQ
+
+sendCueRequest :: CueingClientQueues -> CueRequest -> STM ()
+sendCueRequest CueingClientQueues {..} = writeTBQueue cueReqQ

@@ -38,8 +38,9 @@ import Options.Applicative qualified as Opts
 import Servant
 import Servant.API.WebSocket qualified as WS
 import Servant.Server.Generic
+import Soundbooth.Common.Types
+import Soundbooth.Server.Cueing
 import Soundbooth.Server.Orphans ()
-import Soundbooth.Server.Player
 import Streaming.Prelude qualified as S
 
 type (∈) = (Eff.:>)
@@ -149,16 +150,17 @@ defaultMainWith Options {..} = do
       runConsole $
         runConcurrent $
           runReader backendOpts $ do
-            qs <- newPlayerQueues 16
+            (qs, pqs) <- newCueingQueues
             runReader qs $
-              runPlayer playerOpts qs cs
-                `race_` WS.runWebSocketsIO do
-                  runWarpServerSettings @TheAPI
-                    (Warp.defaultSettings & Warp.setPort backendOpts.port)
-                    (genericServerT @APIRoutes $ theServer backendOpts)
+              runReader pqs $
+                runCueingServer playerOpts qs pqs cs
+                  `race_` WS.runWebSocketsIO do
+                    runWarpServerSettings @TheAPI
+                      (Warp.defaultSettings & Warp.setPort backendOpts.port)
+                      (genericServerT @APIRoutes $ theServer backendOpts)
 
 theServer ::
-  ( Reader PlayerQueues ∈ es
+  ( Reader CueingQueues ∈ es
   , Concurrent ∈ es
   , WS.WebSockets ∈ es
   , Log Eff.:> es
@@ -173,38 +175,38 @@ theServer BackendOptions {..} = do
 
 handleWs ::
   ( Concurrent ∈ es
-  , Reader PlayerQueues ∈ es
+  , Reader CueingQueues ∈ es
   , WS.WebSockets ∈ es
   , Log Eff.:> es
   ) =>
   WS.Connection ->
   Eff es ()
 handleWs conn = do
-  qs <- subscribe =<< ask @PlayerQueues
-  atomically $ mapM_ (sendRequest qs) [GetPlaylist]
+  qs <- subscribeCue =<< ask @CueingQueues
+  atomically $ mapM_ (sendCueRequest qs) [PlayerRequest GetPlaylist, GetCuelist]
   runReader qs $
     sendResp
       `race_` sendEvt
       `race_` recvr
       `race_` forever do
         threadDelay $ 30_000_000
-        WS.sendPing conn KeepAlive
+        WS.sendPing conn $ PlayerEvent KeepAlive
   where
     sendEvt = do
-      qs <- ask @ClientQueues
-      S.repeatM (atomically $ readEvent qs)
+      qs <- ask @CueingClientQueues
+      S.repeatM (atomically $ readCueEvent qs)
         & S.chain (logInfo "Sending event to conn: ")
         & S.mapM_ (WS.sendTextData conn)
     sendResp = do
-      qs <- ask @ClientQueues
-      S.repeatM (atomically (readResponse qs))
+      qs <- ask @CueingClientQueues
+      S.repeatM (atomically (readCueResponse qs))
         & S.chain (logInfo "Sending resp to conn: ")
         & S.mapM_ (WS.sendTextData conn)
     recvr = do
-      qs <- ask @ClientQueues
+      qs <- ask @CueingClientQueues
       S.repeatM (WS.receiveData conn)
         & S.chain (logInfo "Request: ")
-        & S.mapM_ (atomically . sendRequest qs)
+        & S.mapM_ (atomically . sendCueRequest qs)
 
 serveStatics :: FilePath -> Tagged (Eff es) Application
 serveStatics src =

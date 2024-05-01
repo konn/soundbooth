@@ -26,3 +26,7 @@ deriving via ViaJSON Request instance WebSocketsData Request
 deriving via ViaJSON Response instance WebSocketsData Response
 
 deriving via ViaJSON Event instance WebSocketsData Event
+
+deriving via ViaJSON CueRequest instance WebSocketsData CueRequest
+
+deriving via ViaJSON CueEvent instance WebSocketsData CueEvent

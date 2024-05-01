@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -38,6 +39,7 @@ defaultMain = do
         , fadeOut = False
         , crossFade = False
         , activeTab = Tracks
+        , cuelist = mempty
         }
     update = updateModel
 
@@ -67,15 +69,15 @@ handleWsProto uri
   | otherwise = uri {uriScheme = "ws:"}
 
 updateModel :: Action -> Model -> Effect Action Model
-updateModel (Websock (WebSocketMessage (Event evt))) m = handleEvent evt m
+updateModel (Websock (WebSocketMessage (CueEvent evt))) m = handleCueEvent evt m
 updateModel (Websock (WebSocketMessage (Response rsp))) m = handleResponse rsp m
 updateModel (Websock _) m = noEff m
 updateModel (SwitchTab tab) m = noEff $ m & #activeTab .~ tab
 updateModel (Toggle sound) m =
-  let (m', cmd) = toggleCmd m sound
+  let (m', cmd) = PlayerRequest <$> toggleCmd m sound
    in m' <# do NoOp <$ send cmd
 updateModel NoOp m = noEff m
-updateModel (Request req) m = m <# do NoOp <$ send req
+updateModel (CueRequest req) m = m <# do NoOp <$ send req
 updateModel ToggleFadeIn m =
   noEff $ m & #fadeIn %~ not
 updateModel ToggleFadeOut m =
@@ -123,7 +125,7 @@ handleResponse = const noEff
 
 handleCueEvent :: CueEvent -> Model -> Effect Action Model
 handleCueEvent (PlayerEvent evt) m = handleEvent evt m
-handleCueEvent (CueCurrentCues cues) m = noEff m
+handleCueEvent (CueCurrentCues cues) m = noEff $ m & #cuelist .~ cues
 handleCueEvent (CueStatus _) m = noEff m
 
 handleEvent :: Event -> Model -> Effect Action Model
@@ -157,10 +159,10 @@ viewModel m@Model {..} =
         [ section_
             [class_ "buttons"]
             [ button_
-                [onClick $ Request GetPlaylist, class_ "button is-success is-outlined"]
+                [onClick $ CueRequest $ PlayerRequest GetPlaylist, class_ "button is-success is-outlined"]
                 [mdiDark "sync"]
             , button_
-                [onClick $ Request StopAll, class_ "button is-danger is-outlined"]
+                [onClick $ CueRequest $ PlayerRequest StopAll, class_ "button is-danger is-outlined"]
                 [mdiDark "stop"]
             , button_
                 [ onClick ToggleFadeIn
@@ -202,7 +204,7 @@ viewModel m@Model {..} =
                       , text (T.pack $ show tab)
                       ]
                   ]
-                | tab <- [Tracks] -- [minBound .. maxBound]
+                | tab <- [Tracks, Cues]
                 ]
             ]
         , div_
@@ -241,19 +243,20 @@ data Model = Model
   , fadeOut :: !Bool
   , crossFade :: !Bool
   , activeTab :: !Tab
+  , cuelist :: !Cuelist
   }
   deriving (Show, Eq, Ord, Generic)
 
-data EventOrResponse = Event !Event | Response !Response
+data EventOrResponse = CueEvent !CueEvent | Response !Response
   deriving (Show, Eq, Ord, Generic)
 
 instance FromJSON EventOrResponse where
-  parseJSON v = Event <$> parseJSON v <|> Response <$> parseJSON v
+  parseJSON v = CueEvent <$> parseJSON v <|> Response <$> parseJSON v
 
 data Action
   = Websock (WebSocket EventOrResponse)
   | Toggle SoundName
-  | Request Request
+  | CueRequest CueRequest
   | SwitchTab Tab
   | ToggleFadeIn
   | ToggleFadeOut
