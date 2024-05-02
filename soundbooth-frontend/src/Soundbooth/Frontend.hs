@@ -253,7 +253,7 @@ renderTab Cues model =
       [ div_
           [class_ "grid"]
           [ div_
-            [class_ "cell is-full is-fullwidth"]
+            [class_ "cell"]
             [ div_
                 [ class_ $
                     unwords $

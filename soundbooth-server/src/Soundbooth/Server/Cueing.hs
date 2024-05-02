@@ -39,6 +39,7 @@ import Data.Functor (void)
 import Data.Generics.Labels ()
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
+import Data.Text qualified as T
 import Data.Vector qualified as V
 import DeferredFolds.UnfoldlM qualified as UL
 import Effectful hiding ((:>>))
@@ -338,7 +339,6 @@ stopCue goNext = localDomain "stopCue" $ do
             UL.foldM (L.generalize L.set) (TSet.unfoldlM nowPl)
               <* TSet.reset nowPl
         mapM_ (pushPlayerRequest . maybe Stop FadeOut fading) playing
-        pure undefined
 
 sendCueEvent :: (Reader CueEnv :> es, Concurrent :> es) => CueEvent -> Eff es ()
 sendCueEvent ce = do
@@ -353,9 +353,11 @@ pushPlayerRequest ce = do
 startCue ::
   (State CueState :> es, Reader CueEnv :> es, Concurrent :> es, Random :> es, Log :> es) =>
   Eff es ()
-startCue = do
-  void $ async $ stopCue False
+startCue = localDomain "startCue" do
+  st <- use #status
+  when (st == Playing) $ void $ async $ stopCue False
   aCue <- use #cueTape
+  logTrace_ $ "playing: " <> tshow (view focus <$> aCue)
   #trackTape .= (within traverse1 . downward #commands =<< aCue)
   #status .= Playing
   void $
@@ -415,6 +417,9 @@ startCue = do
   #trackTape .= Nothing
   #status .= Idle
   sendCueEvent . CueStatus =<< getCueStatus
+
+tshow :: (Show a) => a -> T.Text
+tshow = T.pack . show
 
 readCueEvent :: CueingClientQueues -> STM CueEvent
 readCueEvent CueingClientQueues {..} = readSource evtQ
