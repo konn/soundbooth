@@ -249,23 +249,26 @@ renderTab Tracks model =
   ]
 renderTab Cues model =
   [ section_
-      [class_ "main columns"]
+      [class_ "main fixed-grid has-1-cols"]
       [ div_
-        [class_ "column is-full is-fullwidth"]
-        [ div_
-            [ class_ $
-                unwords $
-                  catMaybes
-                    [ Just "button"
-                    , Just "is-fullwidth"
-                    , cueStyleFor i model.cueStatus
-                    ]
-            , onClick $ ToggleCue i
+          [class_ "grid"]
+          [ div_
+            [class_ "cell is-full is-fullwidth"]
+            [ div_
+                [ class_ $
+                    unwords $
+                      catMaybes
+                        [ Just "button"
+                        , Just "is-fullwidth"
+                        , cueStyleFor i model.cueStatus
+                        ]
+                , onClick $ ToggleCue i
+                ]
+                ["Cue #", vshow i, ": ", text $ cue.name]
+            , div_ [class_ "container"] [p_ [] ["Steps: ", vshow $ V.length $ cue.steps]]
             ]
-            ["Cue #", vshow i, ": ", text $ cue.name]
-        , div_ [class_ "container"] [p_ [] ["Steps: ", vshow $ V.length $ cue.steps]]
-        ]
-      | (i, cue) <- V.toList $ V.indexed model.cuelist
+          | (i, cue) <- V.toList $ V.indexed model.cuelist
+          ]
       ]
   ]
 
