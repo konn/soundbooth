@@ -11,7 +11,7 @@ import Control.Lens
 import Data.Aeson (FromJSON)
 import Data.Aeson.Types (FromJSON (..))
 import Data.Coerce (coerce)
-import Data.Foldable (fold, foldMap')
+import Data.Foldable (foldMap')
 import Data.Generics.Labels ()
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Ordered qualified as OMap (alter)
@@ -20,7 +20,6 @@ import Data.Map.Ordered.Strict qualified as OMap
 import Data.Maybe (maybeToList)
 import Data.String (fromString)
 import Data.Text qualified as T
-import Data.Traversable (forM)
 import Data.Vector qualified as V
 import GHC.Generics
 import Miso
@@ -143,7 +142,7 @@ handleResponse = const noEff
 handleCueEvent :: CueEvent -> Model -> Effect Action Model
 handleCueEvent (PlayerEvent evt) m = handleEvent evt m
 handleCueEvent (CueCurrentCues cues) m = noEff $ m & #cuelist .~ cues
-handleCueEvent (CueStatus _) m = noEff m
+handleCueEvent (CueStatus st) m = noEff $ m & #cueStatus .~ st
 
 handleEvent :: Event -> Model -> Effect Action Model
 handleEvent (Started sns) =
