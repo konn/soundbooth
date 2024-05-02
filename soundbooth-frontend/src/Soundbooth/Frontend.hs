@@ -8,6 +8,7 @@ module Soundbooth.Frontend (defaultMain) where
 import Control.Applicative ((<|>))
 import Control.Arrow ((>>>))
 import Control.Lens
+import Control.Monad (guard)
 import Data.Aeson (FromJSON)
 import Data.Aeson.Types (FromJSON (..))
 import Data.Coerce (coerce)
@@ -17,7 +18,7 @@ import Data.List.NonEmpty qualified as NE
 import Data.Map.Ordered qualified as OMap (alter)
 import Data.Map.Ordered.Strict (OMap)
 import Data.Map.Ordered.Strict qualified as OMap
-import Data.Maybe (maybeToList)
+import Data.Maybe (catMaybes, maybeToList)
 import Data.String (fromString)
 import Data.Text qualified as T
 import Data.Vector qualified as V
@@ -97,8 +98,13 @@ toggleCue m cueID =
   flip foldMap (m.cuelist V.!? cueID) \CueInfo {} ->
     case m.cueStatus of
       Inactive -> [CueGoto cueID, CuePlay]
-      Active i _ _
-        | i == cueID -> [CueStop]
+      Active i _ st
+        | i == cueID ->
+            case st of
+              CuePlayingStep {} -> [CueStop]
+              CueFinished {} -> [CueGoto cueID, CuePlay]
+              CueInterrupted {} -> [CueGoto cueID, CuePlay]
+              IdleCue -> [CuePlay]
         | otherwise -> [CueGoto cueID, CuePlay]
 
 toggleCmd :: Model -> SoundName -> (Model, Request)
@@ -244,23 +250,41 @@ renderTab Tracks model =
 renderTab Cues model =
   [ section_
       [class_ "main"]
-      [ div_
-        [class_ "column is-full is-multiline"]
-        [ h3_
-            [ class_ $
-                unwords $
-                  "button"
-                    : "is-fullwidth"
-                    : ["is-primary" | isActive]
-            , onClick $ ToggleCue i
-            ]
-            ["Cue #", vshow i, ": ", text $ cue.name]
-        , div_ [class_ "container"] [p_ [] ["Steps: ", vshow $ V.length $ cue.steps]]
-        ]
-      | (i, cue) <- V.toList $ V.indexed model.cuelist
-      , let isActive = (model ^? #cueStatus . #_Active . _1) == Just i
+      [ section_
+          [class_ "container"]
+          [ h2_ [] ["All Cues"]
+          , div_
+              [class_ "columns"]
+              [ div_
+                [class_ "column is-full is-multiline"]
+                [ div_
+                    [ class_ $
+                        unwords $
+                          catMaybes
+                            [ Just "button"
+                            , Just "is-fullwidth"
+                            , cueStyleFor i model.cueStatus
+                            ]
+                    , onClick $ ToggleCue i
+                    ]
+                    ["Cue #", vshow i, ": ", text $ cue.name]
+                , div_ [class_ "container"] [p_ [] ["Steps: ", vshow $ V.length $ cue.steps]]
+                ]
+              | (i, cue) <- V.toList $ V.indexed model.cuelist
+              ]
+          ]
       ]
   ]
+
+cueStyleFor :: Int -> CueingStatus -> Maybe Text
+cueStyleFor i cst = do
+  Active j _ st <- pure cst
+  guard $ i == j
+  case st of
+    IdleCue -> Just "is-warning"
+    CuePlayingStep {} -> Just "is-primary"
+    CueFinished {} -> Just "is-disabled"
+    CueInterrupted {} -> Just "is-disabled"
 
 vshow :: (Show b) => b -> View a
 vshow = fromString . show
