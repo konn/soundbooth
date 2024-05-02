@@ -163,7 +163,7 @@ process (PlayerRequest req) = localDomain "process" $ do
 process CuePlay = do
   localDomain "process" $
     logTrace_ "Cue Playing"
-  void $ async $ startCue
+  void $ async startCue
 process CueStop = localDomain "process" $ do
   logTrace_ "Cue Stopping"
   stopCue True
@@ -186,6 +186,7 @@ switchCuePossiblyCrossFade ::
   , Reader CueEnv :> es
   , Concurrent :> es
   , Random :> es
+  , Log :> es
   ) =>
   (Maybe CueTape -> Maybe CueTape) ->
   Eff es ()
@@ -350,9 +351,10 @@ pushPlayerRequest ce = do
   atomically $ writeTBQueue plEvtQ ce
 
 startCue ::
-  (State CueState :> es, Reader CueEnv :> es, Concurrent :> es, Random :> es) =>
+  (State CueState :> es, Reader CueEnv :> es, Concurrent :> es, Random :> es, Log :> es) =>
   Eff es ()
 startCue = do
+  void $ async $ stopCue False
   aCue <- use #cueTape
   #trackTape .= (within traverse1 . downward #commands =<< aCue)
   #status .= Playing
