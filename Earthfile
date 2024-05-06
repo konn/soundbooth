@@ -6,8 +6,7 @@ WORKDIR /workdir
 ENV GHC=wasm32-wasi-ghc
 ENV CABAL=wasm32-wasi-cabal --project-file=cabal-wasm.project --with-ghc-pkg=wasm32-wasi-ghc-pkg --with-hsc2hs=wasm32-wasi-hsc2hs --with-ghc=wasm32-wasi-ghc-${GHC_VER}
 
-BUILD:
-  FUNCTION
+build:
   ARG target
   ARG outdir=$(echo ${target} | cut -d: -f3)
   ARG wasm=${outdir}.wasm
@@ -32,21 +31,24 @@ BUILD:
   LET WASM_LIB=$(wasm32-wasi-ghc --print-libdir)
   LET DEST=dist
   RUN mkdir -p dist
+  RUN --mount ${MOUNT_DIST_NEWSTYLE} cp ${HS_WASM_PATH} ./dist/${wasm}
   RUN --mount ${MOUNT_DIST_NEWSTYLE} ${WASM_LIB}/post-link.mjs --input ${HS_WASM_PATH} --output ./dist/ghc_wasm_jsffi.js
-  RUN --mount ${MOUNT_DIST_NEWSTYLE} cp ${HS_WASM_PATH} dist/${wasm}
+  SAVE ARTIFACT dist
 
-OPTIMISE_WASM:
-  FUNCTION
+optimised-wasm:
   ARG target
   ARG outdir=$(echo ${target} | cut -d: -f3)
   ARG wasm=${outdir}.wasm
-  DO +BUILD --target=${target} --outdir=${outdir} --wasm=${wasm}.orig
+  RUN mkdir -p dist/
+  COPY (+build/dist/${wasm}.orig --target=${target} --outdir=${outdir} --wasm=${wasm}.orig) ./dist/
   RUN wizer --allow-wasi --wasm-bulk-memory true --init-func _initialize -o dist/${wasm} dist/${wasm}.orig
   RUN wasm-opt -Oz dist/${wasm} -o dist/${wasm}
   RUN wasm-tools strip -o dist/${wasm} dist/${wasm}
+  COPY (+build/dist/ghc_wasm_jsffi.js --target=${target} --outdir=${outdir} --wasm=${wasm}.orig) ./dist/
+  SAVE ARTIFACT dist
 
 frontend:
-  DO +OPTIMISE_WASM --target=soundbooth-frontend:exe:soundbooth-frontend
+  COPY (+optimised-wasm/dist --target=soundbooth-frontend:exe:soundbooth-frontend) ./dist
   LET SHASUM=$(sha1sum dist/soundbooth-frontend.wasm | cut -c1-7)
   LET ORIG_WASM=soundbooth-frontend.wasm
   LET FINAL_WASM=soundbooth-frontend-${SHASUM}.wasm
