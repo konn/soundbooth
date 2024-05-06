@@ -42,6 +42,7 @@ import Soundbooth.Common.Types
 import Soundbooth.Server.Cueing
 import Soundbooth.Server.Orphans ()
 import Streaming.Prelude qualified as S
+import WaiAppStatic.Types (unsafeToPiece)
 
 type (∈) = (Eff.:>)
 
@@ -212,6 +213,7 @@ serveStatics :: FilePath -> Tagged (Eff es) Application
 serveStatics src =
   Tagged $
     staticApp $
-      (defaultFileServerSettings src)
+      (defaultWebAppSettings src)
         { ssRedirectToIndex = True
+        , ssIndices = map unsafeToPiece ["index.html", "index.htm"]
         }
