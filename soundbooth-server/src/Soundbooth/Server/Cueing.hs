@@ -358,8 +358,8 @@ stopCue goNext = localDomain "stopCue" $ do
   case st of
     Idle -> pure ()
     Playing -> do
-      #status .= Idle
       aTrack <- currentTrack
+      #status .= Idle
       #trackTape .= Nothing
       atomically . TSet.reset =<< EffL.view #nowPlaying
       forM_ (commandTargets . snd <$> aTrack) \sds -> do
@@ -388,7 +388,7 @@ startCue = localDomain "startCue" do
   forM_ aCue \(_pos, cue) -> do
     #trackTape ?= 0
     #status .= Playing
-    void $
+    st' <-
       (NE.toList cue.commands, Nothing) & fix \self (!rest, !currentSt) -> do
         sendCueEvent . CueStatus =<< getCueStatus
         case rest of
@@ -441,7 +441,7 @@ startCue = localDomain "startCue" do
                 self (rest', Just st')
     #trackTape .= Nothing
     #status .= Idle
-    moveCueWith (fmap (+ 1))
+    when (st' == Just Done) $ void $ moveCueWith (fmap (+ 1))
     sendCueEvent . CueStatus =<< getCueStatus
 
 moveTrackWith ::
