@@ -21,6 +21,7 @@ module Soundbooth.Server.Types (
   CueCommand,
   NamedSample (..),
   RawCueCommand,
+  commandTargets,
   SoundName (..),
   Request (..),
   CueRequest (..),
@@ -100,6 +101,11 @@ data CueCommand' a
       , fadeOut :: Maybe Fading
       }
   deriving (Show, Eq, Ord, Generic, Generic1, Functor, Foldable, Traversable)
+
+commandTargets :: CueCommand' a -> NonEmpty a
+commandTargets = \case
+  PlayCue {play = songs} -> songs
+  CrossFadeTo {crossFadeTo} -> crossFadeTo
 
 cmdOpts :: J.Options
 cmdOpts = J.defaultOptions {J.sumEncoding = J.UntaggedValue}

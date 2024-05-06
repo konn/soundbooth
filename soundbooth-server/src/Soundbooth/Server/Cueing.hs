@@ -324,21 +324,18 @@ stopCue goNext = localDomain "stopCue" $ do
   mCue <- use #cueTape
   st <- use #status
   logTrace "stopping cue" (view focus <$> mCue, st)
-  forM_ mCue \aCue -> do
-    case st of
-      Idle -> pure ()
-      Playing -> do
-        #status .= Idle
-        #trackTape .= Nothing
-        when goNext $
-          #cueTape ?= tug rightward aCue
+  case st of
+    Idle -> pure ()
+    Playing -> do
+      #status .= Idle
+      aTrack <- use #trackTape
+      #trackTape .= Nothing
+      atomically . TSet.reset =<< EffL.view #nowPlaying
+      forM_ (commandTargets . view focus <$> aTrack) \sds -> do
         fading <- use #fadeOut <* (#fadeOut .= Nothing)
-        nowPl <- EffL.view #nowPlaying
-        playing <-
-          atomically $
-            UL.foldM (L.generalize L.set) (TSet.unfoldlM nowPl)
-              <* TSet.reset nowPl
-        mapM_ (pushPlayerRequest . maybe Stop FadeOut fading) playing
+        forConcurrently_ sds $ pushPlayerRequest . maybe Stop FadeOut fading
+      forM_ mCue \aCue ->
+        when goNext $ #cueTape ?= tug rightward aCue
 
 sendCueEvent :: (Reader CueEnv :> es, Concurrent :> es) => CueEvent -> Eff es ()
 sendCueEvent ce = do
@@ -355,7 +352,7 @@ startCue ::
   Eff es ()
 startCue = localDomain "startCue" do
   st <- use #status
-  when (st == Playing) $ void $ async $ stopCue False
+  when (st == Playing) $ void $ stopCue False
   aCue <- use #cueTape
   logTrace_ $ "playing: " <> tshow (view focus <$> aCue)
   #trackTape .= (within traverse1 . downward #commands =<< aCue)
@@ -369,7 +366,7 @@ startCue = localDomain "startCue" do
         Just cursor -> do
           targets <- case cursor ^. focus of
             PlayCue {..} -> do
-              mapM_
+              mapConcurrently_
                 ( fmap (fmap pushPlayerRequest) . maybe
                     <$> Play
                     <*> flip FadeIn
@@ -386,10 +383,9 @@ startCue = localDomain "startCue" do
                     <* TSet.reset playing
               case froms0 of
                 Nothing ->
-                  mapM_ (pushPlayerRequest . FadeIn crossFade) crossFadeTo
+                  mapConcurrently_ (pushPlayerRequest . FadeIn crossFade) crossFadeTo
                 Just froms ->
-                  pushPlayerRequest $
-                    CrossFade crossFade froms crossFadeTo
+                  pushPlayerRequest $ CrossFade crossFade froms crossFadeTo
               #fadeOut .= fadeOut
               pure crossFadeTo
           st' <-
