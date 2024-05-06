@@ -386,64 +386,64 @@ startCue = localDomain "startCue" do
   when (st == Playing) $ void $ stopCue False
   aCue <- currentCue
   logTrace_ $ "playing: " <> tshow aCue
-  #trackTape ?= 0
-  #status .= Playing
-  void $
-    Nothing & fix \self currentSt -> do
-      sendCueEvent . CueStatus =<< getCueStatus
-      mcursor <- currentTrack
-      case mcursor of
-        Nothing -> pure currentSt
-        Just (_, cmd) -> do
-          targets <- case cmd of
-            PlayCue {..} -> do
-              mapConcurrently_
-                ( fmap (fmap pushPlayerRequest) . maybe
-                    <$> Play
-                    <*> flip FadeIn
-                    <*> pure fadeIn
-                )
-                play
-              #fadeOut .= fadeOut
-              pure play
-            CrossFadeTo {..} -> do
-              froms0 <- do
-                playing <- EffL.view #nowPlaying
-                atomically $
-                  UL.foldM (NE.nonEmpty <$> L.generalize L.nub) (TSet.unfoldlM playing)
-                    <* TSet.reset playing
-              case froms0 of
-                Nothing ->
-                  mapConcurrently_ (pushPlayerRequest . FadeIn crossFade) crossFadeTo
-                Just froms ->
-                  pushPlayerRequest $ CrossFade crossFade froms crossFadeTo
-              #fadeOut .= fadeOut
-              pure crossFadeTo
-          st' <-
-            fold
-              <$> mapConcurrently
-                ( \name ->
-                    subscribeSound name \evts -> fix \go -> do
-                      r <- atomically $ readTBMQueue evts
-                      maybe
-                        (pure Done)
-                        ( \case
-                            Finished {} -> pure Done
-                            Interrupted {} -> pure Abort
-                            _ -> go
-                        )
-                        r
-                )
-                targets
-          case st' of
-            Abort -> pure (Just Abort)
-            _ -> do
-              void $ moveCueWith (fmap (+ 1))
-              self $ Just st'
-  moveCueWith (fmap (+ 1))
-  #trackTape .= Nothing
-  #status .= Idle
-  sendCueEvent . CueStatus =<< getCueStatus
+  forM_ aCue \(_pos, cue) -> do
+    #trackTape ?= 0
+    #status .= Playing
+    void $
+      (NE.toList cue.commands, Nothing) & fix \self (!rest, !currentSt) -> do
+        sendCueEvent . CueStatus =<< getCueStatus
+        case rest of
+          [] -> pure currentSt
+          cmd : rest' -> do
+            targets <- case cmd of
+              PlayCue {..} -> do
+                mapConcurrently_
+                  ( fmap (fmap pushPlayerRequest) . maybe
+                      <$> Play
+                      <*> flip FadeIn
+                      <*> pure fadeIn
+                  )
+                  play
+                #fadeOut .= fadeOut
+                pure play
+              CrossFadeTo {..} -> do
+                froms0 <- do
+                  playing <- EffL.view #nowPlaying
+                  atomically $
+                    UL.foldM (NE.nonEmpty <$> L.generalize L.nub) (TSet.unfoldlM playing)
+                      <* TSet.reset playing
+                case froms0 of
+                  Nothing ->
+                    mapConcurrently_ (pushPlayerRequest . FadeIn crossFade) crossFadeTo
+                  Just froms ->
+                    pushPlayerRequest $ CrossFade crossFade froms crossFadeTo
+                #fadeOut .= fadeOut
+                pure crossFadeTo
+            st' <-
+              fold
+                <$> mapConcurrently
+                  ( \name ->
+                      subscribeSound name \evts -> fix \go -> do
+                        r <- atomically $ readTBMQueue evts
+                        maybe
+                          (pure Done)
+                          ( \case
+                              Finished {} -> pure Done
+                              Interrupted {} -> pure Abort
+                              _ -> go
+                          )
+                          r
+                  )
+                  targets
+            case st' of
+              Abort -> pure $ Just Abort
+              _ -> do
+                void $ moveCueWith (fmap (+ 1))
+                self (rest', Just st')
+    #trackTape .= Nothing
+    #status .= Idle
+    moveCueWith (fmap (+ 1))
+    sendCueEvent . CueStatus =<< getCueStatus
 
 tshow :: (Show a) => a -> T.Text
 tshow = T.pack . show

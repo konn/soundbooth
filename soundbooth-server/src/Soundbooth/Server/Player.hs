@@ -37,6 +37,7 @@ import Control.Monad.Trans (lift)
 import Data.Foldable (foldl')
 import Data.Function ((&))
 import Data.Functor.Of (Of)
+import Data.Generics.Labels ()
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Ordered qualified as OMap (alter)
@@ -56,6 +57,7 @@ import Effectful.Concurrent.STM
 import Effectful.Concurrent.SinkSource
 import Effectful.Dispatch.Static (unsafeEff_)
 import Effectful.Reader.Static (Reader, asks, runReader)
+import Effectful.Reader.Static.Lens qualified as EffL
 import Focus qualified
 import GHC.Generics
 import Soundbooth.Common.Types
@@ -149,7 +151,18 @@ processReq GetPlaylist = do
   S.yield $ Right $ CurrentPlaylist pl
 processReq (Play sn) = cutIn sn
 processReq (Stop sn) = cutOut sn
-processReq StopAll = lift stopAll *> S.yield (Left Ok)
+processReq StopAll =
+  lift stopAll *> do
+    playing <- lift $ EffL.view @PlayerState #playing
+    interps <-
+      lift $
+        atomically $
+          U.foldM
+            (L.generalize $ fmap (Right . Interrupted) . NE.nonEmpty <$> L.premap fst L.nub)
+            (TMap.unfoldlM playing)
+            <* TMap.reset playing
+    S.each interps
+    S.yield (Left Ok)
 processReq (FadeIn dur sn) = fadeIn dur sn
 processReq (FadeOut dur sn) = fadeOut dur sn
 processReq (CrossFade dur froms tos) = crossFade dur froms tos
@@ -312,7 +325,7 @@ cutOut sn = do
       atomically $
         TMap.delete sn playing
     pure stopped
-  when stopped $ S.yield $ Right $ Finished $ NE.singleton sn
+  when stopped $ S.yield $ Right $ Interrupted $ NE.singleton sn
   S.yield $ Left Ok
 
 withSample ::
