@@ -103,7 +103,6 @@ library
     warp,
     websockets,
     yaml,
-    zippers,
 
 executable soundbooth-repl
   import: defaults

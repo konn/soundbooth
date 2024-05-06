@@ -1,4 +1,5 @@
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -28,17 +29,15 @@ module Soundbooth.Server.Cueing (
 import Control.Concurrent.STM.TBMQueue (TBMQueue, closeTBMQueue, newTBMQueue, readTBMQueue, writeTBMQueue)
 import Control.Exception.Safe (bracket)
 import Control.Foldl qualified as L
-import Control.Lens (traverse1, view, (^.))
 import Control.Lens.Extras (is)
-import Control.Monad (forM_, guard, when)
+import Control.Monad (forM_, guard, join, when, (>=>))
 import Control.Monad.Trans
-import Control.Zipper hiding ((:>))
 import Data.Foldable (fold)
 import Data.Function
 import Data.Functor (void)
 import Data.Generics.Labels ()
-import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
+import Data.Maybe (isJust)
 import Data.Text qualified as T
 import Data.Vector qualified as V
 import DeferredFolds.UnfoldlM qualified as UL
@@ -110,11 +109,12 @@ runCueingServer ::
 runCueingServer playerOpts pqs qs@cueingQueues cfg = do
   nowPlaying <- liftIO TSet.newIO
   subscription <- liftIO TMap.newIO
-  let cueTape = traverse `within` zipper cfg.cues
+  let cueTape = Just 0
       trackTape = Nothing
       fadeOut = Nothing
       status = Idle
       cuelist = buildCuelist cfg.cues
+      rawCues = cfg.cues
   g <- getStdGen
   evalRandom g $
     evalState CueState {..} $
@@ -170,13 +170,13 @@ process CueStop = localDomain "process" $ do
   stopCue True
 process CueGoNext = localDomain "process" do
   logTrace_ "Cue Going next"
-  switchCuePossiblyCrossFade $ fmap (tug rightward)
+  switchCuePossiblyCrossFade $ fmap (+ 1)
 process CueGoPrev = localDomain "process" do
   logTrace_ "Cue Going Prev"
-  switchCuePossiblyCrossFade $ fmap (tug leftward)
+  switchCuePossiblyCrossFade $ fmap (subtract 1)
 process (CueGoto i) = localDomain "process" do
   logTrace "Cue GoTo" i
-  switchCuePossiblyCrossFade $ fmap (tug (moveTo i))
+  switchCuePossiblyCrossFade $ const $ Just i
 process GetCueState = localDomain "process" do
   logTrace_ "GetCueState"
   sendCueEvent . CueCurrentCues =<< EffL.view #cuelist
@@ -193,47 +193,79 @@ switchCuePossiblyCrossFade ::
   Eff es ()
 switchCuePossiblyCrossFade f = do
   stt <- use #status
+  void $ moveCueWith f
   case stt of
-    Idle -> #cueTape %= f
-    Playing -> do
-      #cueTape %= f
-      void $ async startCue
+    Idle -> pure ()
+    Playing -> void $ async startCue
+
+moveCueWith ::
+  (Reader CueEnv :> es, State CueState :> es) =>
+  (Maybe CueTape -> Maybe CueTape) ->
+  Eff es (Maybe Int)
+moveCueWith f = do
+  cues <- EffL.view #cuelist
+  let f' = (f >=> \i -> i <$ guard (i < V.length cues))
+  #cueTape <%= f'
+
+currentCue ::
+  ( Reader CueEnv :> es
+  , State CueState :> es
+  ) =>
+  Eff es (Maybe (Int, Cue' SoundName))
+currentCue = do
+  mpos <- use #cueTape
+  cues <- EffL.view #rawCues
+  pure $ do
+    pos <- mpos
+    cue <- cues V.!? pos
+    pure (pos, cue)
+
+currentTrack ::
+  (State CueState :> es, Reader CueEnv :> es) =>
+  Eff es (Maybe (Int, RawCueCommand))
+currentTrack =
+  currentCue
+    >>= fmap join . mapM \(_pos, cue) -> do
+      mtrack <- use #trackTape
+      pure $
+        (liftA2 (,) <$> pure <*> (V.fromList (NE.toList cue.commands) V.!?))
+          =<< mtrack
 
 getCueStatus ::
-  (State CueState :> es) =>
+  (State CueState :> es, Reader CueEnv :> es) =>
   Eff es CueingStatus
 getCueStatus = do
-  mcue <- use #cueTape
+  mcue <- currentCue
   case mcue of
     Nothing -> pure Inactive
-    Just cue -> do
-      mtrack <- use #trackTape
-      let pos = tooth cue
-          cueInfo = toCueInfo $ cue ^. focus
+    Just (pos, cue) -> do
+      mtrack <- currentTrack
+      let cueInfo = toCueInfo cue
       case mtrack of
         Nothing -> pure $ Active pos cueInfo IdleCue
-        Just track -> do
+        Just (trackNum, _) -> do
           status <- use #status
           pure $
             Active pos cueInfo $
               case status of
                 Idle -> IdleCue
-                Playing -> CuePlayingStep $ tooth track
+                Playing -> CuePlayingStep trackNum
 
 data CueEnv = CueEnv
   { nowPlaying :: TSet.Set SoundName
   , subscription :: TMap.Map SoundName (TMap.Map Int (TBMQueue Event))
+  , rawCues :: V.Vector RawCue
   , cuelist :: Cuelist
   , cueingQueues :: CueingQueues
   }
   deriving (Generic)
 
-type CueTape = Top :>> V.Vector RawCue :>> RawCue
+type CueTape = Int
 
-type TrackTape = Top :>> V.Vector RawCue :>> RawCue :>> NonEmpty RawCueCommand :>> RawCueCommand
+type TrackTape = Int
 
 data CueState = CueState
-  { cueTape :: Maybe (CueTape)
+  { cueTape :: Maybe CueTape
   , trackTape :: Maybe TrackTape
   , fadeOut :: Maybe Fading
   , status :: Status
@@ -321,21 +353,20 @@ stopCue ::
   Bool ->
   Eff es ()
 stopCue goNext = localDomain "stopCue" $ do
-  mCue <- use #cueTape
+  mCue <- currentCue
   st <- use #status
-  logTrace "stopping cue" (view focus <$> mCue, st)
+  logTrace "stopping cue" (mCue, st)
   case st of
     Idle -> pure ()
     Playing -> do
       #status .= Idle
-      aTrack <- use #trackTape
+      aTrack <- currentTrack
       #trackTape .= Nothing
       atomically . TSet.reset =<< EffL.view #nowPlaying
-      forM_ (commandTargets . view focus <$> aTrack) \sds -> do
+      forM_ (commandTargets . snd <$> aTrack) \sds -> do
         fading <- use #fadeOut <* (#fadeOut .= Nothing)
         forConcurrently_ sds $ pushPlayerRequest . maybe Stop FadeOut fading
-      forM_ mCue \aCue ->
-        when goNext $ #cueTape ?= tug rightward aCue
+      when (isJust mCue && goNext) $ void $ moveCueWith $ fmap (+ 1)
 
 sendCueEvent :: (Reader CueEnv :> es, Concurrent :> es) => CueEvent -> Eff es ()
 sendCueEvent ce = do
@@ -353,18 +384,18 @@ startCue ::
 startCue = localDomain "startCue" do
   st <- use #status
   when (st == Playing) $ void $ stopCue False
-  aCue <- use #cueTape
-  logTrace_ $ "playing: " <> tshow (view focus <$> aCue)
-  #trackTape .= (within traverse1 . downward #commands =<< aCue)
+  aCue <- currentCue
+  logTrace_ $ "playing: " <> tshow aCue
+  #trackTape ?= 0
   #status .= Playing
   void $
     Nothing & fix \self currentSt -> do
       sendCueEvent . CueStatus =<< getCueStatus
-      mcursor <- use #trackTape
+      mcursor <- currentTrack
       case mcursor of
         Nothing -> pure currentSt
-        Just cursor -> do
-          targets <- case cursor ^. focus of
+        Just (_, cmd) -> do
+          targets <- case cmd of
             PlayCue {..} -> do
               mapConcurrently_
                 ( fmap (fmap pushPlayerRequest) . maybe
@@ -407,9 +438,9 @@ startCue = localDomain "startCue" do
           case st' of
             Abort -> pure (Just Abort)
             _ -> do
-              #trackTape .= rightward cursor
+              void $ moveCueWith (fmap (+ 1))
               self $ Just st'
-  #cueTape .= (rightward =<< aCue)
+  moveCueWith (fmap (+ 1))
   #trackTape .= Nothing
   #status .= Idle
   sendCueEvent . CueStatus =<< getCueStatus

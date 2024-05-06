@@ -221,11 +221,7 @@ fadeOut dur sn = withSample sn \_ -> do
         unless (i == dur.steps) $ lift $ threadDelay usec
       lift $ atomically (TMap.focus Focus.delete sn playing)
       b <- lift $ stop s
-      when b $
-        S.yield $
-          Right $
-            Interrupted $
-              NE.singleton sn
+      when b $ S.yield $ Right $ Finished $ NE.singleton sn
       S.yield $ Left Ok
 
 crossFade ::
@@ -274,7 +270,7 @@ crossFade dur froms tos = do
           atomically $
             TMap.insert s sn playing
   mapM_ (lift . stop . snd) froms'
-  S.each $ Right . Interrupted . fmap fst <$> NE.nonEmpty froms'
+  S.each $ Right . Finished . fmap fst <$> NE.nonEmpty froms'
   lift $ do
     forM_ tos' \(sn, s) -> do
       atomically $ TMap.insert s sn playing
@@ -316,7 +312,7 @@ cutOut sn = do
       atomically $
         TMap.delete sn playing
     pure stopped
-  when stopped $ S.yield $ Right $ Interrupted $ NE.singleton sn
+  when stopped $ S.yield $ Right $ Finished $ NE.singleton sn
   S.yield $ Left Ok
 
 withSample ::
