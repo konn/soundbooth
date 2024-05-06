@@ -175,63 +175,77 @@ viewModel :: Model -> View Action
 viewModel m@Model {..} =
   section_
     [data_ "theme" "dark", class_ "section"]
-    [ h1_ [class_ "title"] [text "Soundbooth"]
+    [ nav_
+        [class_ "navbar is-fixed-top"]
+        [ div_
+            [class_ "navbar-brand"]
+            [ figure_
+                [class_ "image is-square"]
+                [img_ [src_ "imgs/logo.png", alt_ "Soundbooth"]]
+            , div_
+                [class_ "tabs navbar-item"]
+                [ ul_
+                    []
+                    [ li_
+                      [class_ "is-active" | tab == activeTab]
+                      [ a_
+                          [onClick $ SwitchTab tab]
+                          [ toIcon tab
+                          , text (T.pack $ show tab)
+                          ]
+                      ]
+                    | tab <- [Tracks, Cues]
+                    ]
+                ]
+            ]
+        ]
     , section_
         [class_ "soundbooth"]
-        [ section_
-            [class_ "buttons"]
-            [ button_
-                [onClick $ Sync, class_ "button is-success is-outlined"]
-                [mdiDark "sync"]
-            , button_
-                [onClick $ CueRequest $ PlayerRequest StopAll, class_ "button is-danger is-outlined"]
-                [mdiDark "stop"]
-            , button_
-                [ onClick ToggleFadeIn
-                , class_ $
-                    unwords $
-                      "button"
-                        : "is-link"
-                        : if fadeIn then ["is-active"] else ["is-outlined"]
-                ]
-                [mdiDark "north_east"]
-            , button_
-                [ onClick ToggleFadeOut
-                , class_ $
-                    unwords $
-                      "button"
-                        : "is-link"
-                        : ["is-outlined" | not fadeOut]
-                ]
-                [mdiDark "south_east"]
-            , button_
-                [ onClick ToggleCrossFade
-                , class_ $
-                    unwords $
-                      "button"
-                        : "is-link"
-                        : ["is-outlined" | not crossFade]
-                ]
-                [mdiDark "shuffle"]
-            ]
-        , div_
-            [class_ "tabs"]
-            [ ul_
-                []
-                [ li_
-                  [class_ "is-active" | tab == activeTab]
-                  [ a_
-                      [onClick $ SwitchTab tab]
-                      [ toIcon tab
-                      , text (T.pack $ show tab)
-                      ]
-                  ]
-                | tab <- [Tracks, Cues]
-                ]
-            ]
-        , div_
+        [ div_
             [class_ "container"]
             $ renderTab activeTab m
+        ]
+    , nav_
+        [class_ "navbar is-fixed-bottom"]
+        [ div_
+            [class_ "navbar-brand"]
+            [ section_
+                [class_ "buttons navbar-item"]
+                [ button_
+                    [onClick $ Sync, class_ "button is-success is-outlined"]
+                    [mdiDark "sync"]
+                , button_
+                    [onClick $ CueRequest $ PlayerRequest StopAll, class_ "button is-danger is-outlined"]
+                    [mdiDark "stop"]
+                , button_
+                    [ onClick ToggleFadeIn
+                    , class_ $
+                        unwords $
+                          "button"
+                            : "is-link"
+                            : if fadeIn then ["is-active"] else ["is-outlined"]
+                    ]
+                    [mdiDark "north_east"]
+                , button_
+                    [ onClick ToggleFadeOut
+                    , class_ $
+                        unwords $
+                          "button"
+                            : "is-link"
+                            : ["is-outlined" | not fadeOut]
+                    ]
+                    [mdiDark "south_east"]
+                , button_
+                    [ onClick ToggleCrossFade
+                    , class_ $
+                        unwords $
+                          "button"
+                            : "is-link"
+                            : ["is-outlined" | not crossFade]
+                    ]
+                    [mdiDark "shuffle"]
+                ]
+            ]
         ]
     ]
 

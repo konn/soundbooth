@@ -66,6 +66,7 @@ frontend:
   LET INDEX_JS_FINAL=index-${INDEX_JS_SHASUM}.js
   RUN mv dist/index.js dist/${INDEX_JS_FINAL}
   COPY data/index.html dist/index.html
+  COPY data/imgs dist/imgs
   RUN sed -i "s/index.js/${INDEX_JS_FINAL}/g" dist/index.html
   RUN rm dist/*.orig
 
