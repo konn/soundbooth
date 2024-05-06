@@ -37,7 +37,6 @@ import Data.Function
 import Data.Functor (void)
 import Data.Generics.Labels ()
 import Data.List.NonEmpty qualified as NE
-import Data.Maybe (isJust)
 import Data.Text qualified as T
 import Data.Vector qualified as V
 import DeferredFolds.UnfoldlM qualified as UL
@@ -204,7 +203,7 @@ moveCueWith ::
   Eff es (Maybe Int)
 moveCueWith f = do
   cues <- EffL.view #cuelist
-  let f' = (f >=> \i -> i <$ guard (i < V.length cues))
+  let f' = f >=> \i -> i <$ guard (i < V.length cues)
   #cueTape <%= f'
 
 currentCue ::
@@ -366,7 +365,7 @@ stopCue goNext = localDomain "stopCue" $ do
       forM_ (commandTargets . snd <$> aTrack) \sds -> do
         fading <- use #fadeOut <* (#fadeOut .= Nothing)
         forConcurrently_ sds $ pushPlayerRequest . maybe Stop FadeOut fading
-      when (isJust mCue && goNext) $ void $ moveCueWith $ fmap (+ 1)
+      when goNext $ void $ moveCueWith $ fmap (+ 1)
 
 sendCueEvent :: (Reader CueEnv :> es, Concurrent :> es) => CueEvent -> Eff es ()
 sendCueEvent ce = do
@@ -438,12 +437,24 @@ startCue = localDomain "startCue" do
             case st' of
               Abort -> pure $ Just Abort
               _ -> do
-                void $ moveCueWith (fmap (+ 1))
+                void $ moveTrackWith (fmap (+ 1))
                 self (rest', Just st')
     #trackTape .= Nothing
     #status .= Idle
     moveCueWith (fmap (+ 1))
     sendCueEvent . CueStatus =<< getCueStatus
+
+moveTrackWith ::
+  ( Reader CueEnv :> es
+  , State CueState :> es
+  ) =>
+  (Maybe Int -> Maybe Int) ->
+  Eff es ()
+moveTrackWith f =
+  currentTrack >>= mapM_ \(_pos, _) -> do
+    currentCue >>= mapM_ \(_, Cue {..}) -> do
+      let f' = f >=> \i -> i <$ guard (i < NE.length commands)
+      #trackTape %= f'
 
 tshow :: (Show a) => a -> T.Text
 tshow = T.pack . show
