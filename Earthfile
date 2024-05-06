@@ -19,7 +19,8 @@ BUILD:
   RUN --mount ${MOUNT_GLOBAL_STORE} \
       --mount ${MOUNT_DIST_NEWSTYLE} \
       ${CABAL} update hackage.haskell.org,2024-04-28T21:10:00Z
-  COPY --keep-ts . .
+  COPY --keep-ts soundbooth-core soundbooth-core
+  COPY --keep-ts soundbooth-frontend soundbooth-frontend
   RUN --mount ${MOUNT_GLOBAL_STORE} \
       --mount ${MOUNT_DIST_NEWSTYLE} \
       ${CABAL} build --only-dependencies ${target}
@@ -31,20 +32,29 @@ BUILD:
   LET WASM_LIB=$(wasm32-wasi-ghc --print-libdir)
   LET DEST=dist
   RUN mkdir -p dist
-  RUN --mount ${MOUNT_DIST_NEWSTYLE} ${WASM_LIB}/post-link.mjs --input ${HS_WASM_PATH} --output ghc_wasm_jsffi.js
-  RUN --mount ${MOUNT_DIST_NEWSTYLE} wizer --allow-wasi --wasm-bulk-memory true --init-func _initialize -o dist/${wasm} "${HS_WASM_PATH}"
+  RUN --mount ${MOUNT_DIST_NEWSTYLE} ${WASM_LIB}/post-link.mjs --input ${HS_WASM_PATH} --output ./dist/ghc_wasm_jsffi.js
+  RUN --mount ${MOUNT_DIST_NEWSTYLE} cp ${HS_WASM_PATH} dist/${wasm}
+
+OPTIMISE_WASM:
+  FUNCTION
+  ARG target
+  ARG outdir=$(echo ${target} | cut -d: -f3)
+  ARG wasm=${outdir}.wasm
+  DO +BUILD --target=${target} --outdir=${outdir} --wasm=${wasm}.orig
+  RUN wizer --allow-wasi --wasm-bulk-memory true --init-func _initialize -o dist/${wasm} dist/${wasm}.orig
   RUN wasm-opt -Oz dist/${wasm} -o dist/${wasm}
   RUN wasm-tools strip -o dist/${wasm} dist/${wasm}
-  LET SHASUM=$(sha1sum dist/${wasm} | cut -c1-7)
-  LET FINAL_WASM=${wasm%.wasm}-${SHASUM}.wasm
-  RUN mv dist/${wasm} dist/${FINAL_WASM}
-  RUN cp data/index.html dist/
-  RUN cp data/index.js dist/index-${SHASUM}.js
-  RUN sed -i "s/index.js/index-${SHASUM}.js/g" dist/index.html
-  RUN sed -i "s/${wasm}/${FINAL_WASM}/g" dist/index-${SHASUM}.js
-  RUN cp *.js dist/
-
-  SAVE ARTIFACT ./dist AS LOCAL _build
 
 frontend:
-  DO +BUILD --target=soundbooth-frontend:exe:soundbooth-frontend
+  DO +OPTIMISE_WASM --target=soundbooth-frontend:exe:soundbooth-frontend
+  LET SHASUM=$(sha1sum dist/soundbooth-frontend.wasm | cut -c1-7)
+  LET ORIG_WASM=soundbooth-frontend.wasm
+  LET FINAL_WASM=soundbooth-frontend-${SHASUM}.wasm
+  RUN mv dist/${ORIG_WASM} dist/${FINAL_WASM}
+  COPY data/index.html dist/index.html
+  COPY data/index.js dist/index-${SHASUM}.js
+  RUN sed -i "s/index.js/index-${SHASUM}.js/g" dist/index.html
+  RUN sed -i "s/${ORIG_WASM}/${FINAL_WASM}/g" dist/index-${SHASUM}.js
+  RUN rm dist/*.orig
+
+  SAVE ARTIFACT ./dist AS LOCAL _build
