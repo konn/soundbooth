@@ -18,6 +18,7 @@ module Soundbooth.Server.App.Server (
 import Control.Applicative ((<**>))
 import Control.Monad (forever)
 import Data.Function ((&))
+import Data.Text qualified as T
 import Data.Yaml qualified as Y
 import Effectful (Eff, runEff)
 import Effectful qualified as Eff
@@ -153,12 +154,16 @@ defaultMainWith Options {..} = do
           runReader backendOpts $ do
             (qs, pqs) <- newCueingQueues
             runReader qs $
-              runReader pqs $
+              runReader pqs $ do
+                logInfo_ $ "Server is listening: http://localhost:" <> tshow backendOpts.port
                 runCueingServer playerOpts qs pqs cs
                   `race_` WS.runWebSocketsIO do
                     runWarpServerSettings @TheAPI
                       (Warp.defaultSettings & Warp.setPort backendOpts.port)
                       (genericServerT @APIRoutes $ theServer backendOpts)
+
+tshow :: (Show a) => a -> T.Text
+tshow = T.pack . show
 
 theServer ::
   ( Reader CueingQueues ∈ es
