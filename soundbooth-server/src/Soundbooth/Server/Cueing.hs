@@ -451,10 +451,9 @@ moveTrackWith ::
   (Maybe Int -> Maybe Int) ->
   Eff es ()
 moveTrackWith f =
-  currentTrack >>= mapM_ \(_pos, _) -> do
-    currentCue >>= mapM_ \(_, Cue {..}) -> do
-      let f' = f >=> \i -> i <$ guard (i < NE.length commands)
-      #trackTape %= f'
+  currentCue >>= mapM_ \(_, Cue {..}) -> do
+    let f' = f >=> \i -> i <$ guard (i < NE.length commands)
+    #trackTape %= f'
 
 tshow :: (Show a) => a -> T.Text
 tshow = T.pack . show
